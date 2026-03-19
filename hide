@@ -1,10 +1,13 @@
 #!/bin/bash
-# HIPR CLI — команда: hide
-# https://github.com/ChernOvOne/HIPR
+# ═══════════════════════════════════════════════════════════════════════════
+#  HIPR CLI — команда: hide
+#  https://github.com/ChernOvOne/HIPR
+# ═══════════════════════════════════════════════════════════════════════════
 
 HIDE_DIR="/opt/hipr"
 CONFIG_FILE="$HIDE_DIR/config.env"
 MTG_BIN="$HIDE_DIR/bin/mtg"
+HIDE_BIN="/usr/local/bin/hide"
 WEB_DIR="/var/www/hipr"
 THEMES_LOCAL="$HIDE_DIR/themes"
 THEMES_API="https://api.github.com/repos/ChernOvOne/HIPR/contents/themes"
@@ -26,17 +29,19 @@ sep()       { echo -e "${B}  ╠════════════════
 row()       { printf "${B}  ║${N} %-57s${B}║${N}\n" "$1"; }
 kv()        { printf "${B}  ║${N}  ${DIM}%-16s${N} ${W}%-39s${N}${B}║${N}\n" "$1" "$2"; }
 kvc()       { printf "${B}  ║${N}  ${DIM}%-16s${N} ${C}%-39s${N}${B}║${N}\n" "$1" "$2"; }
+pause()     { echo ""; read -rp "  Нажмите Enter для продолжения..." _; }
 
-svc() {
+svc_status() {
   systemctl is-active --quiet "$1" 2>/dev/null \
-    && echo -e "${G}● работает${N}" || echo -e "${R}● остановлен${N}"
+    && echo -e "${G}🟢 работает${N}" || echo -e "${R}🔴 остановлен${N}"
+}
+svc_icon() {
+  systemctl is-active --quiet "$1" 2>/dev/null && echo "🟢" || echo "🔴"
 }
 
 get_stats() {
-  # Статистика из лога mtg
   STAT_CONNS=$(grep -c "accepted connection" "$LOG_MTG" 2>/dev/null || echo "0")
   STAT_TODAY=$(grep -c "$(date '+%Y/%m/%d')" "$LOG_MTG" 2>/dev/null || echo "0")
-  STAT_BYTES=$(du -sh "$LOG_MTG" 2>/dev/null | cut -f1 || echo "0")
 }
 
 active_theme() {
@@ -54,17 +59,19 @@ draw_header() {
   echo "   ██║  ██║██║██║     ██║  ██║"
   echo "   ╚═╝  ╚═╝╚═╝╚═╝     ╚═╝  ╚═╝  v${VERSION}"
   echo -e "${N}"
-  top_b; row ""
-  printf "${B}  ║${N}  %-10s %-46b${B}║${N}\n" "hipr-mtg"  "$(svc hipr-mtg)"
-  printf "${B}  ║${N}  %-10s %-46b${B}║${N}\n" "nginx"     "$(svc nginx)"
-  printf "${B}  ║${N}  %-10s %-46b${B}║${N}\n" "watchdog"  "$(svc hipr-watchdog.timer 2>/dev/null || svc hipr-watchdog)"
+  local mtg_s nginx_s wd_s
+  mtg_s=$(svc_icon hipr-mtg)
+  nginx_s=$(svc_icon nginx)
+  wd_s=$(svc_icon hipr-watchdog.timer 2>/dev/null)
+  top_b
+  printf "${B}  ║${N}  %s %-13s %s %-13s %s %-18s${B}║${N}\n" \
+    "$mtg_s" "hipr-mtg" "$nginx_s" "nginx" "$wd_s" "watchdog"
   sep
-  load_cfg
-  kv  "Домен:"       "${DOMAIN:-не задан}"
-  kvc "DC:"          "${ACTIVE_DC:-—}"
-  kv  "Тема сайта:"  "$(active_theme)"
+  kv  "🌐 Домен:"   "${DOMAIN:-не задан}"
+  kvc "📡 DC:"       "${ACTIVE_DC:-—}"
+  kv  "🎨 Тема:"    "$(active_theme)"
   sep
-  printf "${B}  ║${N}  ${DIM}Соединений сегодня${N}  ${Y}%-8s${N}  ${DIM}Всего${N}  ${Y}%-14s${N}${B}║${N}\n" \
+  printf "${B}  ║${N}  📊  ${DIM}Сегодня${N}  ${Y}%-8s${N}  ${DIM}Всего${N}  ${Y}%-18s${N}${B}║${N}\n" \
     "$STAT_TODAY" "$STAT_CONNS"
   row ""; bot_b; echo ""
 }
@@ -75,18 +82,20 @@ draw_header() {
 main_menu() {
   while true; do
     draw_header
-    echo -e "  ${BOLD}Главное меню${N}\n"
-    echo -e "  ${W}[1]${N}  Статус и мониторинг"
-    echo -e "  ${W}[2]${N}  Ссылка для Telegram + QR-код"
-    echo -e "  ${W}[3]${N}  ${Y}Темы сайта-обманки${N}"
-    echo -e "  ${W}[4]${N}  Управление сервисами"
-    echo -e "  ${W}[5]${N}  Логи"
-    echo -e "  ${W}[6]${N}  Настройки"
-    echo -e "  ${W}[7]${N}  Обновление"
+    echo -e "  ${BOLD}${W}Главное меню${N}\n"
+    echo -e "  ${C}[1]${N}  📊  Статус и мониторинг"
+    echo -e "  ${C}[2]${N}  🔗  Ссылка для Telegram + QR-код"
+    echo -e "  ${C}[3]${N}  🎨  Темы сайта-обманки"
+    echo -e "  ${C}[4]${N}  ⚙️   Управление сервисами"
+    echo -e "  ${C}[5]${N}  📋  Логи"
+    echo -e "  ${C}[6]${N}  🔧  Настройки"
+    echo -e "  ${C}[7]${N}  🔄  Обновление"
     echo ""
-    echo -e "  ${R}[0]${N}  Выход"
+    echo -e "  ${R}[8]${N}  🗑️   Удалить / Переустановить"
     echo ""
-    read -rp "  Выберите: " ch
+    echo -e "  ${DIM}[0]${N}  🚪  Выход"
+    echo ""
+    read -rp "  Выберите [0-8]: " ch
     case "$ch" in
       1) menu_status ;;
       2) menu_link ;;
@@ -95,6 +104,7 @@ main_menu() {
       5) menu_logs ;;
       6) menu_settings ;;
       7) menu_update ;;
+      8) menu_uninstall ;;
       0|q|Q) echo ""; exit 0 ;;
       *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
     esac
@@ -108,40 +118,43 @@ menu_status() {
   while true; do
     load_cfg; get_stats; clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Статус и мониторинг"
+    printf "${B}  ║${N}  ${BOLD}📊 %-53s${N}${B}║${N}\n" "Статус и мониторинг"
     sep
     for s in hipr-mtg nginx fail2ban; do
-      printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "$s" "$(svc $s)"
+      printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "$s" "$(svc_status $s)"
     done
-    printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "watchdog" "$(svc hipr-watchdog.timer 2>/dev/null || echo '-')"
+    printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "watchdog" \
+      "$(svc_status hipr-watchdog.timer 2>/dev/null || echo '-')"
     sep
     local ip; ip=$(curl -s --max-time 4 ifconfig.me 2>/dev/null || echo "—")
-    kv "Внешний IP:" "$ip"
-    kv "Домен:" "${DOMAIN:-—}"
-    kvc "Активный DC:" "${ACTIVE_DC:-—}"
-    kv "Тема сайта:" "$(active_theme)"
+    kv "🌍 Внешний IP:" "$ip"
+    kv "🌐 Домен:" "${DOMAIN:-—}"
+    kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
+    kv "🎨 Тема сайта:" "$(active_theme)"
     sep
-    kv "Соединений:" "$STAT_CONNS всего / $STAT_TODAY сегодня"
+    kv "🔗 Соединений:" "$STAT_CONNS всего / $STAT_TODAY сегодня"
     local ce; ce=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}" \
       | grep "Expiry" | awk '{print $3,$4}' | head -1)
-    kv "Сертификат:" "${ce:-—}"
+    kv "🔒 Сертификат:" "${ce:-—}"
     local load; load=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
     local mem; mem=$(free -m | awk '/Mem:/{printf "%.0f%% из %dMB", $3/$2*100, $2}')
-    kv "CPU load:" "$load"
-    kv "RAM:" "$mem"
+    kv "💻 CPU load:" "$load"
+    kv "💾 RAM:" "$mem"
     row ""; bot_b; echo ""
-    echo -e "  ${W}[r]${N} Обновить  ${W}[t]${N} Проверить DC  ${R}[0]${N} Назад"
+    echo -e "  ${C}[r]${N} Обновить  ${C}[t]${N} Проверить DC  ${C}[p]${N} Пинг прокси  ${R}[0]${N} Назад"
+    echo ""
     read -rp "  " ch
     case "$ch" in
-      r) continue ;;
-      t) _check_all_dc ;;
+      r|R) continue ;;
+      t|T) _check_all_dc ;;
+      p|P) _ping_proxy ;;
       0|q) return ;;
     esac
   done
 }
 
 _check_all_dc() {
-  clear; echo -e "\n  ${BOLD}Проверка Telegram DC:${N}\n"
+  clear; echo -e "\n  ${BOLD}📡 Проверка Telegram DC${N}\n"
   declare -A DC_NAMES=(
     ["149.154.175.50"]="DC1 Miami"
     ["149.154.167.51"]="DC2 Amsterdam"
@@ -152,19 +165,34 @@ _check_all_dc() {
   load_cfg
   for ip in "149.154.175.50" "149.154.167.51" "149.154.175.100" "149.154.167.91" "91.108.56.130"; do
     local name="${DC_NAMES[$ip]}"
-    local active_mark=""; [[ "$ip" == "${ACTIVE_DC:-}" ]] && active_mark=" ${C}← активный${N}"
+    local active_mark=""; [[ "$ip" == "${ACTIVE_DC:-}" ]] && active_mark="  ${Y}◀ активный${N}"
     local start; start=$(date +%s%N)
-    local result
     if timeout 3 bash -c "echo '' > /dev/tcp/$ip/443" 2>/dev/null; then
       local end; end=$(date +%s%N)
       local ms=$(( (end - start) / 1000000 ))
-      result="${G}✓ OK${N} ${DIM}${ms}ms${N}"
+      printf "  🟢  %-22s %-18s ${G}%dms${N}%b\n" "$name" "$ip" "$ms" "$active_mark"
     else
-      result="${R}✗ недоступен${N}"
+      printf "  🔴  %-22s %-18s ${R}недоступен${N}%b\n" "$name" "$ip" "$active_mark"
     fi
-    printf "  %-22s %-18s %b%b\n" "$name" "$ip" "$result" "$active_mark"
   done
-  echo ""; read -rp "  [Enter] назад" _
+  echo ""; pause
+}
+
+_ping_proxy() {
+  load_cfg; clear; echo -e "\n  ${BOLD}🔗 Проверка прокси${N}\n"
+  local http_code; http_code=$(curl -sk -o /dev/null -w "%{http_code}" \
+    "https://${DOMAIN:-localhost}" --max-time 5 2>/dev/null || echo "000")
+  if [[ "$http_code" == "200" || "$http_code" == "304" ]]; then
+    echo -e "  🟢  Сайт-обманка: ${G}HTTP $http_code${N}"
+  else
+    echo -e "  🔴  Сайт-обманка: ${R}HTTP $http_code${N}"
+  fi
+  if ss -tlnp 2>/dev/null | grep -q '127.0.0.1:2398'; then
+    echo -e "  🟢  mtg слушает: ${G}127.0.0.1:2398${N}"
+  else
+    echo -e "  🔴  mtg ${R}не слушает на 2398${N}"
+  fi
+  echo ""; pause
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -175,33 +203,34 @@ menu_link() {
   local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}"
   local ht="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}"
   top_b
-  printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Ссылка для Telegram"
+  printf "${B}  ║${N}  ${BOLD}🔗 %-53s${N}${B}║${N}\n" "Ссылка для Telegram"
   sep; row ""
-  echo -e "${B}  ║${N}  ${DIM}tg:// ссылка (для Telegram):${N}"
+  echo -e "${B}  ║${N}  ${DIM}tg:// — открывает Telegram напрямую:${N}"
   echo -e "${B}  ║${N}  ${C}${tg}${N}"
   row ""
-  echo -e "${B}  ║${N}  ${DIM}https:// ссылка (для браузера и ботов):${N}"
+  echo -e "${B}  ║${N}  ${DIM}https:// — для браузера и ботов:${N}"
   echo -e "${B}  ║${N}  ${Y}${ht}${N}"
   row ""; sep
-  kv "Секрет:" "$MTG_SECRET"
-  kv "Домен:" "$DOMAIN"
-  kv "Порт:" "443"
-  kv "Тип:" "FakeTLS (ee...)"
+  kv "🔑 Секрет:" "${MTG_SECRET:0:28}..."
+  kv "🌐 Домен:" "$DOMAIN"
+  kv "🔌 Порт:" "443"
+  kv "🛡️  Тип:" "FakeTLS (telegram.org)"
   row ""; bot_b; echo ""
-  echo -e "  ${BOLD}QR-код:${N}\n"
-  command -v qrencode &>/dev/null && \
-    qrencode -t ANSIUTF8 -l M "$ht" 2>/dev/null | sed 's/^/    /' || \
-    echo -e "  ${Y}apt install qrencode${N}"
+  if command -v qrencode &>/dev/null; then
+    echo -e "  ${BOLD}📱 QR-код:${N}\n"
+    qrencode -t ANSIUTF8 -l M "$ht" 2>/dev/null | sed 's/^/    /'
+    echo ""
+  fi
+  echo -e "  ${C}[c]${N} 📋 Копировать ссылку  ${C}[s]${N} 📨 Отправить в бот  ${R}[0]${N} Назад"
   echo ""
-  echo -e "  ${W}[c]${N} Копировать tg:// ссылку  ${W}[s]${N} Отправить в Telegram-бот  ${R}[0]${N} Назад"
   read -rp "  " ch
   case "$ch" in
-    c)
+    c|C)
       echo -n "$tg" | xclip -selection clipboard 2>/dev/null || \
         echo -n "$tg" | xsel --clipboard 2>/dev/null || \
         { echo -e "\n  ${Y}Ссылка:${N} $tg"; }
-      echo -e "  ${G}✓ Скопировано${N}"; sleep 1 ;;
-    s) _send_link_to_bot "$tg" ;;
+      echo -e "  ${G}✅ Скопировано${N}"; sleep 1 ;;
+    s|S) _send_link_to_bot "$tg" ;;
   esac
 }
 
@@ -209,16 +238,16 @@ _send_link_to_bot() {
   load_cfg
   local link="$1"
   if [[ -z "${BOT_TOKEN:-}" || -z "${BOT_CHAT_ID:-}" ]]; then
-    echo -e "\n  ${Y}Бот не настроен. Настройте через: hide → Настройки → Telegram бот${N}"
+    echo -e "\n  ${Y}⚠️  Бот не настроен → hide → [6] Настройки → Telegram бот${N}"
     sleep 2; return
   fi
-  local msg="🔗 <b>HIPR прокси</b>%0A%0A<code>${link}</code>%0A%0AДомен: ${DOMAIN}"
+  local msg="🔗 <b>HIPR прокси</b>%0A%0A<code>${link}</code>%0A%0A🌐 Домен: ${DOMAIN}"
   if curl -s --max-time 10 \
     "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
     -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1; then
-    echo -e "\n  ${G}✓ Ссылка отправлена в бот${N}"
+    echo -e "\n  ${G}✅ Ссылка отправлена в бот${N}"
   else
-    echo -e "\n  ${R}✗ Ошибка отправки — проверьте токен и chat_id${N}"
+    echo -e "\n  ${R}❌ Ошибка отправки — проверьте токен и chat_id${N}"
   fi
   sleep 2
 }
@@ -230,17 +259,17 @@ menu_themes() {
   while true; do
     clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Темы сайта-обманки"
+    printf "${B}  ║${N}  ${BOLD}🎨 %-53s${N}${B}║${N}\n" "Темы сайта-обманки"
     sep
-    kv "Активная тема:" "$(active_theme)"
-    kv "Папка тем:" "$THEMES_LOCAL"
+    kv "✅ Активная:" "$(active_theme)"
+    kv "📁 Папка:" "$THEMES_LOCAL"
     bot_b; echo ""
-    echo -e "  ${W}[1]${N}  Выбрать из установленных"
-    echo -e "  ${W}[2]${N}  Скачать темы с GitHub"
-    echo -e "  ${W}[3]${N}  Добавить свою (папка или .zip)"
-    echo -e "  ${W}[4]${N}  Открыть активный сайт в браузере"
-    echo -e "  ${W}[5]${N}  Удалить пользовательскую тему"
-    echo ""; echo -e "  ${R}[0]${N}  Назад"; echo ""
+    echo -e "  ${C}[1]${N}  ✅  Выбрать из установленных"
+    echo -e "  ${C}[2]${N}  ☁️   Скачать темы с GitHub"
+    echo -e "  ${C}[3]${N}  📦  Добавить свою (папка или .zip)"
+    echo -e "  ${C}[4]${N}  🌐  Открыть сайт в браузере"
+    echo -e "  ${C}[5]${N}  🗑️   Удалить пользовательскую тему"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
       1) themes_pick ;;
@@ -276,22 +305,22 @@ collect_themes() {
 themes_pick() {
   collect_themes
   if [[ ${#THEME_DIRS[@]} -eq 0 ]]; then
-    echo -e "\n  ${Y}Нет тем — скачайте с GitHub (пункт 2)${N}"
-    read -rp "  [Enter]" _; return
+    echo -e "\n  ${Y}⚠️  Нет тем — скачайте с GitHub (пункт 2)${N}"
+    pause; return
   fi
   clear; echo ""
   top_b
-  printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Выбор темы"
+  printf "${B}  ║${N}  ${BOLD}✅ %-53s${N}${B}║${N}\n" "Выбор темы"
   sep; row ""
   local active; active=$(active_theme)
   for i in "${!THEME_DIRS[@]}"; do
-    local mark=""; [[ "${THEME_NAMES[$i]}" == "$active" ]] && mark=" ${G}✓${N}"
-    printf "${B}  ║${N}  ${W}[%d]${N} ${BOLD}%-30s${N}%-16b${B}║${N}\n" \
+    local mark=""; [[ "${THEME_NAMES[$i]}" == "$active" ]] && mark=" ${G}◀ активна${N}"
+    printf "${B}  ║${N}  ${C}[%d]${N} ${BOLD}%-30s${N}%-16b${B}║${N}\n" \
       "$((i+1))" "${THEME_NAMES[$i]}" "$mark"
     printf "${B}  ║${N}      ${DIM}%-52s${N}${B}║${N}\n" "${THEME_DESCS[$i]}"
     row ""
   done
-  bot_b; echo ""; echo -e "  ${R}[0]${N}  Назад"; echo ""
+  bot_b; echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
   read -rp "  Номер темы: " ch
   [[ "$ch" == "0" || "$ch" == "q" ]] && return
   [[ ! "$ch" =~ ^[0-9]+$ ]] && { echo -e "\n  ${R}Неверный номер${N}"; sleep 1; return; }
@@ -305,12 +334,11 @@ themes_pick() {
 
 themes_apply() {
   local src="$1" name="$2"
-  echo ""; echo -e "  ${Y}Применяю тему: ${BOLD}$name${N}"
-  # Бэкап
+  echo ""; echo -e "  ${Y}🎨 Применяю тему: ${BOLD}$name${N}"
   if ls "$WEB_DIR"/*.html &>/dev/null 2>&1; then
     local bak="$THEMES_LOCAL/backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$bak"; cp -r "$WEB_DIR"/. "$bak/" 2>/dev/null
-    echo -e "  ${DIM}→ Бэкап: $bak${N}"
+    echo -e "  ${DIM}💾 Бэкап: $bak${N}"
   fi
   rm -rf "${WEB_DIR:?}"/*
   cp -r "$src"/. "$WEB_DIR/"
@@ -319,19 +347,19 @@ themes_apply() {
   echo "$name" > "$HIDE_DIR/config/active_theme"
   if nginx -t 2>/dev/null; then
     systemctl reload nginx
-    echo -e "  ${G}✓ Тема «$name» активирована, nginx перезагружен${N}"
+    echo -e "  ${G}✅ Тема «$name» активирована${N}"
   else
-    echo -e "  ${R}✗ Ошибка nginx — откат${N}"
+    echo -e "  ${R}❌ Ошибка nginx — откат${N}"
     [[ -n "${bak:-}" ]] && cp -r "${bak:-}"/. "$WEB_DIR/" 2>/dev/null
   fi
-  echo ""; read -rp "  [Enter] продолжить" _
+  pause
 }
 
 themes_github() {
-  clear; echo -e "\n  ${BOLD}Темы на GitHub${N}\n"
+  clear; echo -e "\n  ${BOLD}☁️  Темы на GitHub${N}\n"
   echo -e "  ${DIM}Загружаем список...${N}\n"
   if ! curl -sf --max-time 5 https://api.github.com > /dev/null 2>&1; then
-    echo -e "  ${R}✗ GitHub недоступен${N}"; read -rp "  [Enter]" _; return
+    echo -e "  ${R}❌ GitHub недоступен${N}"; pause; return
   fi
   local api_json; api_json=$(curl -sf --max-time 10 "$THEMES_API" 2>/dev/null || echo "[]")
   local dirs; dirs=$(echo "$api_json" | python3 -c "
@@ -343,35 +371,32 @@ try:
 except: pass" 2>/dev/null || echo "blog
 freelancer
 coming-soon")
-
   local arr=(); while IFS= read -r t; do [[ -n "$t" ]] && arr+=("$t"); done <<< "$dirs"
-
   for i in "${!arr[@]}"; do
     local t="${arr[$i]}"
     local inst=""; [[ -d "$THEMES_LOCAL/$t" ]] && inst="${G}[установлена]${N}"
     local desc; desc=$(curl -sf --max-time 5 "$THEMES_RAW/$t/theme.json" 2>/dev/null \
       | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('preview',d.get('description','')))" \
       2>/dev/null || echo "")
-    printf "  ${W}[%d]${N} ${BOLD}%-22s${N} %-20b\n" "$((i+1))" "$t" "$inst"
+    printf "  ${C}[%d]${N} ${BOLD}%-22s${N} %-20b\n" "$((i+1))" "$t" "$inst"
     [[ -n "$desc" ]] && echo -e "      ${DIM}$desc${N}"
     echo ""
   done
-
-  echo -e "  ${W}[a]${N}  Скачать все"
-  echo -e "  ${R}[0]${N}  Назад"; echo ""
+  echo -e "  ${C}[a]${N}  📥 Скачать все"
+  echo -e "  ${R}[0]${N}  ← Назад"; echo ""
   read -rp "  Выбор: " ch
-  if [[ "$ch" == "a" ]]; then
+  if [[ "$ch" == "a" || "$ch" == "A" ]]; then
     for t in "${arr[@]}"; do _dl_theme "$t"; done
   elif [[ "$ch" =~ ^[0-9]+$ ]]; then
     local idx=$((ch-1))
     [[ $idx -ge 0 && $idx -lt ${#arr[@]} ]] && _dl_theme "${arr[$idx]}"
   fi
-  echo ""; read -rp "  [Enter] продолжить" _
+  pause
 }
 
 _dl_theme() {
   local name="$1" dest="$THEMES_LOCAL/$name"
-  echo -e "\n  ${Y}→ Скачиваю: $name${N}"
+  echo -e "\n  ${Y}📥 Скачиваю: $name${N}"
   mkdir -p "$dest"
   local flist; flist=$(curl -sf --max-time 10 "$THEMES_API/$name" 2>/dev/null \
     | python3 -c "
@@ -380,7 +405,6 @@ try:
   for f in json.load(sys.stdin):
     if f.get('type')=='file': print(f['name'], f['download_url'])
 except: pass" 2>/dev/null)
-
   if [[ -n "$flist" ]]; then
     while IFS=' ' read -r fname furl; do
       [[ -z "$fname" ]] && continue
@@ -393,13 +417,13 @@ except: pass" 2>/dev/null)
         && echo -e "    ${G}✓${N} $f" || true
     done
   fi
-
-  [[ -f "$dest/index.html" ]] && echo -e "  ${G}✓ '$name' установлена${N}" || \
-    { echo -e "  ${R}✗ index.html не найден${N}"; rm -rf "$dest"; }
+  [[ -f "$dest/index.html" ]] \
+    && echo -e "  ${G}✅ '$name' установлена${N}" \
+    || { echo -e "  ${R}❌ index.html не найден${N}"; rm -rf "$dest"; }
 }
 
 themes_add() {
-  clear; echo -e "\n  ${BOLD}Добавить свою тему${N}\n"
+  clear; echo -e "\n  ${BOLD}📦 Добавить свою тему${N}\n"
   echo -e "  Укажите путь к папке с ${W}index.html${N} или к .zip архиву\n"
   read -rp "  Путь: " src; [[ -z "$src" ]] && return
   src="${src/#\~/$HOME}"
@@ -408,14 +432,14 @@ themes_add() {
     local tmp; tmp=$(mktemp -d)
     unzip -q "$src" -d "$tmp"
     local idx_path; idx_path=$(find "$tmp" -name "index.html" | head -1)
-    [[ -z "$idx_path" ]] && { echo -e "\n  ${R}✗ index.html не найден${N}"; rm -rf "$tmp"; sleep 2; return; }
+    [[ -z "$idx_path" ]] && { echo -e "\n  ${R}❌ index.html не найден${N}"; rm -rf "$tmp"; sleep 2; return; }
     _install_theme "$(dirname "$idx_path")"
     rm -rf "$tmp"
   elif [[ -d "$src" ]]; then
-    [[ ! -f "$src/index.html" ]] && { echo -e "\n  ${R}✗ Нет index.html${N}"; sleep 2; return; }
+    [[ ! -f "$src/index.html" ]] && { echo -e "\n  ${R}❌ Нет index.html${N}"; sleep 2; return; }
     _install_theme "$src"
   else
-    echo -e "\n  ${R}✗ Путь не найден${N}"; sleep 2
+    echo -e "\n  ${R}❌ Путь не найден${N}"; sleep 2
   fi
 }
 
@@ -428,15 +452,17 @@ _install_theme() {
   local safe; safe=$(echo "$name" | tr ' ' '-' | tr -cd '[:alnum:]-_' | tr '[:upper:]' '[:lower:]')
   local dest="$THEMES_LOCAL/custom/$safe"
   mkdir -p "$(dirname "$dest")"; cp -r "$src" "$dest"
-  echo -e "\n  ${G}✓ Тема «$name» добавлена${N}\n"
+  echo -e "\n  ${G}✅ Тема «$name» добавлена${N}\n"
   read -rp "  Применить сейчас? [Y/n]: " ap
   [[ "${ap,,}" != "n" ]] && themes_apply "$dest" "$name"
 }
 
 themes_preview() {
   load_cfg; echo ""
-  [[ -n "${DOMAIN:-}" ]] && echo -e "  ${C}https://$DOMAIN${N}\n  ${DIM}Это видит ТСПУ при проверке${N}" || echo -e "  ${Y}Домен не настроен${N}"
-  echo ""; read -rp "  [Enter]" _
+  [[ -n "${DOMAIN:-}" ]] \
+    && echo -e "  🌐  ${C}https://$DOMAIN${N}\n  ${DIM}Это видит ТСПУ при проверке${N}" \
+    || echo -e "  ${Y}⚠️  Домен не настроен${N}"
+  echo ""; pause
 }
 
 themes_delete() {
@@ -447,10 +473,10 @@ themes_delete() {
       { cdirs+=("${THEME_DIRS[$i]}"); cnames+=("${THEME_NAMES[$i]}"); }
   done
   if [[ ${#cdirs[@]} -eq 0 ]]; then
-    echo -e "\n  ${Y}Нет пользовательских тем для удаления${N}"; read -rp "  [Enter]" _; return
+    echo -e "\n  ${Y}⚠️  Нет пользовательских тем${N}"; pause; return
   fi
-  clear; echo -e "\n  ${BOLD}Удалить тему${N}\n"
-  for i in "${!cdirs[@]}"; do printf "  ${W}[%d]${N} %s\n" "$((i+1))" "${cnames[$i]}"; done
+  clear; echo -e "\n  ${BOLD}🗑️  Удалить тему${N}\n"
+  for i in "${!cdirs[@]}"; do printf "  ${C}[%d]${N} %s\n" "$((i+1))" "${cnames[$i]}"; done
   echo ""; echo -e "  ${R}[0]${N} Назад"; echo ""
   read -rp "  Номер: " ch
   [[ "$ch" == "0" || "$ch" == "q" || -z "$ch" ]] && return
@@ -458,7 +484,7 @@ themes_delete() {
   local idx=$((ch-1))
   if [[ $idx -ge 0 && $idx -lt ${#cdirs[@]} ]]; then
     read -rp "  Удалить «${cnames[$idx]}»? [y/N]: " c
-    [[ "${c,,}" == "y" ]] && { rm -rf "${cdirs[$idx]}"; echo -e "  ${G}✓ Удалена${N}"; sleep 1; }
+    [[ "${c,,}" == "y" ]] && { rm -rf "${cdirs[$idx]}"; echo -e "  ${G}✅ Удалена${N}"; sleep 1; }
   fi
 }
 
@@ -469,36 +495,41 @@ menu_services() {
   while true; do
     clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Управление сервисами"
+    printf "${B}  ║${N}  ${BOLD}⚙️  %-53s${N}${B}║${N}\n" "Управление сервисами"
     sep; row ""
     for s in hipr-mtg nginx fail2ban; do
-      printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "$s" "$(svc $s)"
+      printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "$s" "$(svc_status $s)"
     done
     row ""; bot_b; echo ""
-    echo -e "  ${W}[1]${N}  Перезапустить hipr-mtg"
-    echo -e "  ${W}[2]${N}  Остановить hipr-mtg"
-    echo -e "  ${W}[3]${N}  Запустить hipr-mtg"
-    echo -e "  ${W}[4]${N}  Перезапустить nginx"
-    echo -e "  ${W}[5]${N}  Перезапустить всё"
-    echo -e "  ${W}[6]${N}  Сменить Telegram DC"
-    echo -e "  ${W}[7]${N}  Принудительный запуск watchdog"
-    echo ""; echo -e "  ${R}[0]${N}  Назад"; echo ""
+    echo -e "  ${C}[1]${N}  🔄  Перезапустить hipr-mtg"
+    echo -e "  ${C}[2]${N}  ⏹️   Остановить hipr-mtg"
+    echo -e "  ${C}[3]${N}  ▶️   Запустить hipr-mtg"
+    echo -e "  ${C}[4]${N}  🔄  Перезапустить nginx"
+    echo -e "  ${C}[5]${N}  🔄  Перезапустить всё"
+    echo -e "  ${C}[6]${N}  📡  Сменить Telegram DC"
+    echo -e "  ${C}[7]${N}  🐕  Запустить watchdog вручную"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
-      1) systemctl restart hipr-mtg && echo -e "\n  ${G}✓ Перезапущен${N}" || echo -e "\n  ${R}✗${N}"; sleep 2 ;;
-      2) systemctl stop hipr-mtg; echo -e "\n  ${Y}⏸ Остановлен${N}"; sleep 2 ;;
-      3) systemctl start hipr-mtg && echo -e "\n  ${G}▶ Запущен${N}"; sleep 2 ;;
-      4) nginx -t && systemctl reload nginx && echo -e "\n  ${G}✓ nginx${N}"; sleep 2 ;;
-      5) systemctl restart hipr-mtg nginx && echo -e "\n  ${G}✓ Всё перезапущено${N}"; sleep 2 ;;
+      1) systemctl restart hipr-mtg \
+           && echo -e "\n  ${G}✅ Перезапущен${N}" || echo -e "\n  ${R}❌${N}"; sleep 2 ;;
+      2) systemctl stop hipr-mtg; echo -e "\n  ${Y}⏹️  Остановлен${N}"; sleep 2 ;;
+      3) systemctl start hipr-mtg \
+           && echo -e "\n  ${G}▶️  Запущен${N}"; sleep 2 ;;
+      4) nginx -t 2>/dev/null && systemctl reload nginx \
+           && echo -e "\n  ${G}✅ nginx перезагружен${N}"; sleep 2 ;;
+      5) systemctl restart hipr-mtg nginx \
+           && echo -e "\n  ${G}✅ Всё перезапущено${N}"; sleep 2 ;;
       6) _change_dc ;;
-      7) bash "$HIDE_DIR/bin/watchdog.sh" && echo -e "\n  ${G}✓ Watchdog запущен${N}"; sleep 2 ;;
+      7) bash "$HIDE_DIR/bin/watchdog.sh" \
+           && echo -e "\n  ${G}✅ Watchdog выполнен${N}"; sleep 2 ;;
       0|q) return ;;
     esac
   done
 }
 
 _change_dc() {
-  load_cfg; clear; echo -e "\n  ${BOLD}Выберите Telegram DC:${N}\n"
+  load_cfg; clear; echo -e "\n  ${BOLD}📡 Выберите Telegram DC${N}\n"
   declare -A DC_NAMES=(
     [1]="DC1 Miami:149.154.175.50"
     [2]="DC2 Amsterdam:149.154.167.51"
@@ -509,9 +540,8 @@ _change_dc() {
   for k in 1 2 3 4 5; do
     local entry="${DC_NAMES[$k]}"
     local name="${entry%%:*}" ip="${entry##*:}"
-    local mark=""; [[ "$ip" == "${ACTIVE_DC:-}" ]] && mark=" ${G}← текущий${N}"
-    [[ "$k" == "2" ]] && mark="$mark ${C}★${N}"
-    printf "  ${W}[%d]${N} %-22s %s%b\n" "$k" "$name" "$ip" "$mark"
+    local mark=""; [[ "$ip" == "${ACTIVE_DC:-}" ]] && mark=" ${Y}◀ текущий${N}"
+    printf "  ${C}[%d]${N} %-22s %s%b\n" "$k" "$name" "$ip" "$mark"
   done
   echo ""; read -rp "  DC [1-5]: " dc
   local entry="${DC_NAMES[$dc]:-}"
@@ -519,7 +549,7 @@ _change_dc() {
     local ip="${entry##*:}"
     sed -i "s/ACTIVE_DC=.*/ACTIVE_DC=\"$ip\"/" "$CONFIG_FILE"
     systemctl restart hipr-mtg
-    echo -e "\n  ${G}✓ Переключено на $ip${N}"
+    echo -e "\n  ${G}✅ Переключено на $ip${N}"
   fi
   sleep 2
 }
@@ -531,45 +561,49 @@ menu_logs() {
   while true; do
     clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Логи"
+    printf "${B}  ║${N}  ${BOLD}📋 %-53s${N}${B}║${N}\n" "Логи"
     sep
     kv "mtg.log:" "$(du -sh $LOG_MTG 2>/dev/null | cut -f1 || echo '0')"
     kv "watchdog.log:" "$(du -sh $LOG_WD 2>/dev/null | cut -f1 || echo '0')"
     kv "nginx:" "$(du -sh $LOG_NGX 2>/dev/null | cut -f1 || echo '0')"
     bot_b; echo ""
-    echo -e "  ${W}[1]${N}  Последние 50 строк mtg"
-    echo -e "  ${W}[2]${N}  Live-режим mtg (Ctrl+C выход)"
-    echo -e "  ${W}[3]${N}  Watchdog лог"
-    echo -e "  ${W}[4]${N}  nginx access лог"
-    echo -e "  ${W}[5]${N}  Статистика за сегодня"
-    echo -e "  ${W}[6]${N}  Очистить все логи"
-    echo ""; echo -e "  ${R}[0]${N}  Назад"; echo ""
+    echo -e "  ${C}[1]${N}  📄  Последние 50 строк mtg"
+    echo -e "  ${C}[2]${N}  👁️   Live-режим mtg (Ctrl+C выход)"
+    echo -e "  ${C}[3]${N}  🐕  Watchdog лог"
+    echo -e "  ${C}[4]${N}  🌐  nginx access лог"
+    echo -e "  ${C}[5]${N}  📊  Статистика за сегодня"
+    echo -e "  ${C}[6]${N}  🗑️   Очистить все логи"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
-      1) clear; tail -50 "$LOG_MTG" 2>/dev/null | grep --color=always -E 'accepted|ERROR|WARN|$'; echo ""; read -rp "  [Enter]" _ ;;
+      1) clear; tail -50 "$LOG_MTG" 2>/dev/null \
+           | grep --color=always -E 'accepted|ERROR|WARN|$'
+         echo ""; pause ;;
       2) tail -f "$LOG_MTG" 2>/dev/null ;;
-      3) clear; tail -50 "$LOG_WD" 2>/dev/null || echo "  Пусто"; read -rp "  [Enter]" _ ;;
-      4) clear; tail -50 "$LOG_NGX" 2>/dev/null || echo "  Пусто"; read -rp "  [Enter]" _ ;;
+      3) clear; tail -50 "$LOG_WD" 2>/dev/null || echo "  Пусто"; pause ;;
+      4) clear; tail -50 "$LOG_NGX" 2>/dev/null || echo "  Пусто"; pause ;;
       5) _stats_today ;;
-      6) read -rp "  Очистить? [y/N]: " c
-         [[ "${c,,}" == "y" ]] && { > "$LOG_MTG"; > "$LOG_WD"; echo -e "  ${G}✓${N}"; sleep 1; } ;;
+      6) read -rp "  🗑️  Очистить все логи? [y/N]: " c
+         [[ "${c,,}" == "y" ]] && {
+           > "$LOG_MTG"; > "$LOG_WD"
+           echo -e "  ${G}✅ Логи очищены${N}"; sleep 1; } ;;
       0|q) return ;;
     esac
   done
 }
 
 _stats_today() {
-  clear; echo -e "\n  ${BOLD}Статистика за сегодня:${N}\n"
+  clear; echo -e "\n  ${BOLD}📊 Статистика за сегодня${N}\n"
   local today; today=$(date '+%Y/%m/%d')
   local conns; conns=$(grep -c "accepted connection" "$LOG_MTG" 2>/dev/null || echo "0")
   local today_c; today_c=$(grep "$today" "$LOG_MTG" 2>/dev/null | grep -c "accepted" || echo "0")
   local errors; errors=$(grep -c "ERROR" "$LOG_MTG" 2>/dev/null || echo "0")
   local wd_switches; wd_switches=$(grep -c "Переключаемся" "$LOG_WD" 2>/dev/null || echo "0")
-  printf "  %-28s ${Y}%s${N}\n" "Соединений сегодня:" "$today_c"
-  printf "  %-28s ${Y}%s${N}\n" "Всего соединений:" "$conns"
-  printf "  %-28s ${R}%s${N}\n" "Ошибок:" "$errors"
-  printf "  %-28s ${C}%s${N}\n" "Смен DC (watchdog):" "$wd_switches"
-  echo ""; read -rp "  [Enter]" _
+  printf "  🔗  %-28s ${Y}%s${N}\n" "Соединений сегодня:" "$today_c"
+  printf "  🔗  %-28s ${Y}%s${N}\n" "Всего соединений:" "$conns"
+  printf "  ❌  %-28s ${R}%s${N}\n" "Ошибок:" "$errors"
+  printf "  📡  %-28s ${C}%s${N}\n" "Смен DC:" "$wd_switches"
+  echo ""; pause
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -579,28 +613,31 @@ menu_settings() {
   while true; do
     load_cfg; clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Настройки"
+    printf "${B}  ║${N}  ${BOLD}🔧 %-53s${N}${B}║${N}\n" "Настройки"
     sep
-    kv "Домен:" "${DOMAIN:-—}"
-    kvc "Активный DC:" "${ACTIVE_DC:-—}"
-    kv "Секрет:" "${MTG_SECRET:0:24}..."
-    kv "Telegram бот:" "$( [[ -n "${BOT_TOKEN:-}" ]] && echo 'настроен' || echo 'не настроен' )"
+    kv "🌐 Домен:" "${DOMAIN:-—}"
+    kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
+    kv "🔑 Секрет:" "${MTG_SECRET:0:24}..."
+    kv "🤖 Telegram бот:" "$( [[ -n "${BOT_TOKEN:-}" ]] && echo '✅ настроен' || echo '➖ не настроен' )"
     bot_b; echo ""
-    echo -e "  ${W}[1]${N}  Пересоздать секрет (ссылки изменятся!)"
-    echo -e "  ${W}[2]${N}  Получить / обновить TLS сертификат"
-    echo -e "  ${W}[3]${N}  Проверить все Telegram DC"
-    echo -e "  ${W}[4]${N}  Настроить Telegram-бот"
-    echo -e "  ${W}[5]${N}  Показать полный конфиг"
-    echo ""; echo -e "  ${R}[0]${N}  Назад"; echo ""
+    echo -e "  ${C}[1]${N}  🔑  Пересоздать секрет ${R}(ссылки изменятся!)${N}"
+    echo -e "  ${C}[2]${N}  🔒  Обновить TLS сертификат"
+    echo -e "  ${C}[3]${N}  📡  Проверить все Telegram DC"
+    echo -e "  ${C}[4]${N}  🤖  Настроить Telegram-бот"
+    echo -e "  ${C}[5]${N}  📄  Показать полный конфиг"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
       1) _regen_secret ;;
       2) _renew_cert ;;
       3) _check_all_dc ;;
       4) _setup_bot ;;
-      5) clear; echo ""; grep -v "^#" "$CONFIG_FILE" | grep -v "^$" | \
-           while IFS='=' read -r k v; do printf "  ${C}%-18s${N} = ${W}%s${N}\n" "$k" "$v"; done
-         echo ""; read -rp "  [Enter]" _ ;;
+      5) clear; echo ""
+         grep -v "^#" "$CONFIG_FILE" | grep -v "^$" | \
+           while IFS='=' read -r k v; do
+             printf "  ${C}%-18s${N} = ${W}%s${N}\n" "$k" "$v"
+           done
+         echo ""; pause ;;
       0|q) return ;;
     esac
   done
@@ -608,60 +645,59 @@ menu_settings() {
 
 _regen_secret() {
   echo ""
-  read -rp "  Сгенерировать новый секрет? Все старые ссылки перестанут работать! [y/N]: " c
+  echo -e "  ${Y}⚠️  Все пользователи со старой ссылкой потеряют подключение!${N}"
+  read -rp "  Сгенерировать новый секрет? [y/N]: " c
   [[ "${c,,}" != "y" ]] && return
   load_cfg
   local new_secret
+  # Фронтинг всегда telegram.org — не домен сервера (иначе петля DNS)
   if [[ -x "$MTG_BIN" ]]; then
-    new_secret=$("$MTG_BIN" generate-secret --hex "${DOMAIN:-localhost}" 2>/dev/null | tr -d '\n')
+    new_secret=$("$MTG_BIN" generate-secret --hex "telegram.org" 2>/dev/null | tr -d '\n')
   fi
   if [[ -z "${new_secret:-}" ]]; then
     local rh; rh=$(openssl rand -hex 16)
-    local dh; dh=$(echo -n "${DOMAIN:-x}" | xxd -p | tr -d '\n')
+    local dh; dh=$(echo -n "telegram.org" | xxd -p | tr -d '\n')
     new_secret="ee${rh}${dh}"
   fi
   sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"$new_secret\"|" "$CONFIG_FILE"
-  # Обновляем mtg.toml
   sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg.toml"
   systemctl restart hipr-mtg
-  echo -e "\n  ${G}✓ Новый секрет применён${N}"
-  echo -e "  ${Y}Раздайте новую ссылку: hide → пункт 2${N}"
+  echo -e "\n  ${G}✅ Новый секрет применён${N}"
+  echo -e "  ${Y}📢 Раздайте новую ссылку: hide → [2]${N}"
   sleep 3
 }
 
 _renew_cert() {
   load_cfg; echo ""
-  echo -e "  ${Y}Обновляем сертификат для $DOMAIN...${N}\n"
+  echo -e "  ${Y}🔒 Обновляем сертификат для $DOMAIN...${N}\n"
   if certbot renew --force-renewal -d "${DOMAIN:-}" 2>&1 | tail -8; then
     systemctl reload nginx
-    echo -e "\n  ${G}✓ Сертификат обновлён${N}"
+    echo -e "\n  ${G}✅ Сертификат обновлён${N}"
   else
-    echo -e "\n  ${R}✗ Ошибка — проверьте DNS${N}"
+    echo -e "\n  ${R}❌ Ошибка — проверьте DNS${N}"
   fi
   sleep 3
 }
 
 _setup_bot() {
-  clear; echo -e "\n  ${BOLD}Настройка Telegram-бота${N}\n"
+  clear; echo -e "\n  ${BOLD}🤖 Настройка Telegram-бота${N}\n"
   echo -e "  1. Откройте @BotFather в Telegram"
   echo -e "  2. Создайте бота: /newbot"
   echo -e "  3. Скопируйте токен"
   echo -e "  4. Напишите боту /start"
-  echo -e "  5. Перейдите: https://api.telegram.org/bot<TOKEN>/getUpdates"
-  echo -e "     чтобы узнать ваш chat_id\n"
+  echo -e "  5. Получите chat_id: ${C}api.telegram.org/bot<TOKEN>/getUpdates${N}\n"
   read -rp "  Bot Token: " tok
   [[ -z "$tok" ]] && return
   read -rp "  Chat ID: " cid
   [[ -z "$cid" ]] && return
-  # Тест
   if curl -sf --max-time 10 \
     "https://api.telegram.org/bot${tok}/sendMessage" \
     -d "chat_id=${cid}&text=✅ HIPR бот подключён!" > /dev/null 2>&1; then
     sed -i "s|BOT_TOKEN=.*|BOT_TOKEN=\"$tok\"|" "$CONFIG_FILE"
     sed -i "s|BOT_CHAT_ID=.*|BOT_CHAT_ID=\"$cid\"|" "$CONFIG_FILE"
-    echo -e "\n  ${G}✓ Бот настроен — проверьте сообщение в Telegram${N}"
+    echo -e "\n  ${G}✅ Бот настроен — проверьте сообщение${N}"
   else
-    echo -e "\n  ${R}✗ Ошибка — проверьте токен и chat_id${N}"
+    echo -e "\n  ${R}❌ Ошибка — проверьте токен и chat_id${N}"
   fi
   sleep 3
 }
@@ -672,41 +708,42 @@ _setup_bot() {
 menu_update() {
   clear; echo ""
   top_b
-  printf "${B}  ║${N}  ${BOLD}%-55s${N}${B}║${N}\n" "Обновление"
+  printf "${B}  ║${N}  ${BOLD}🔄 %-53s${N}${B}║${N}\n" "Обновление"
   bot_b; echo ""
-  echo -e "  ${W}[1]${N}  Обновить mtg до последней версии"
-  echo -e "  ${W}[2]${N}  Обновить hide (CLI меню)"
-  echo -e "  ${W}[3]${N}  Обновить пакеты системы"
-  echo -e "  ${W}[4]${N}  Версии компонентов"
-  echo ""; echo -e "  ${R}[0]${N}  Назад"; echo ""
+  echo -e "  ${C}[1]${N}  ⚡  Обновить mtg до последней версии"
+  echo -e "  ${C}[2]${N}  🔄  Обновить hide (CLI меню)"
+  echo -e "  ${C}[3]${N}  📦  Обновить пакеты системы"
+  echo -e "  ${C}[4]${N}  ℹ️   Версии компонентов"
+  echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
   read -rp "  Выберите: " ch
   case "$ch" in
     1)
-      echo -e "\n  ${Y}Обновляем mtg...${N}"
+      echo -e "\n  ${Y}⚡ Обновляем mtg...${N}"
       local latest; latest=$(curl -sf --max-time 10 \
         "https://api.github.com/repos/9seconds/mtg/releases/latest" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" 2>/dev/null || echo "")
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" \
+        2>/dev/null || echo "")
       if [[ -n "$latest" ]]; then
         local arch; arch=$(uname -m)
         case "$arch" in x86_64) ma="amd64" ;; aarch64) ma="arm64" ;; *) ma="amd64" ;; esac
         local url="https://github.com/9seconds/mtg/releases/download/v${latest}/mtg-${latest}-linux-${ma}.tar.gz"
         wget -q "$url" -O /tmp/mtg_new.tar.gz 2>/dev/null && \
           tar -xzf /tmp/mtg_new.tar.gz -C /tmp/ && \
-          find /tmp -name "mtg" -newer /tmp/mtg_new.tar.gz -type f | head -1 | xargs -I{} cp {} "$MTG_BIN" && \
-          chmod +x "$MTG_BIN" && \
-          systemctl restart hipr-mtg && \
-          echo -e "  ${G}✓ mtg обновлён до v$latest${N}" || \
-          echo -e "  ${R}✗ Ошибка обновления${N}"
+          find /tmp -name "mtg" -newer /tmp/mtg_new.tar.gz -type f | head -1 | \
+            xargs -I{} cp {} "$MTG_BIN" && \
+          chmod +x "$MTG_BIN" && systemctl restart hipr-mtg && \
+          echo -e "  ${G}✅ mtg обновлён до v$latest${N}" || \
+          echo -e "  ${R}❌ Ошибка обновления${N}"
         rm -f /tmp/mtg_new.tar.gz
       else
-        echo -e "  ${Y}Не удалось получить версию${N}"
+        echo -e "  ${Y}⚠️  Не удалось получить версию${N}"
       fi
       sleep 2 ;;
     2)
-      echo -e "\n  ${Y}Обновляем hide...${N}"
+      echo -e "\n  ${Y}🔄 Обновляем hide...${N}"
       curl -fsSL "https://raw.githubusercontent.com/ChernOvOne/HIPR/main/hide" \
         -o "$HIDE_BIN" && chmod +x "$HIDE_BIN" && \
-        echo -e "  ${G}✓ hide обновлён${N}" || echo -e "  ${R}✗ Ошибка${N}"
+        echo -e "  ${G}✅ hide обновлён${N}" || echo -e "  ${R}❌ Ошибка${N}"
       sleep 2 ;;
     3) apt-get update -qq && apt-get upgrade -y -qq 2>&1 | tail -5; sleep 2 ;;
     4)
@@ -716,9 +753,94 @@ menu_update() {
       printf "  %-20s %s\n" "nginx:" "$(nginx -v 2>&1 | grep -o '[0-9.]*' | head -1)"
       printf "  %-20s %s\n" "certbot:" "$(certbot --version 2>/dev/null | head -1 || echo '—')"
       printf "  %-20s %s\n" "OpenSSL:" "$(openssl version | awk '{print $2}')"
-      echo ""; read -rp "  [Enter]" _ ;;
+      echo ""; pause ;;
     0|q) return ;;
   esac
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 8. УДАЛЕНИЕ / ПЕРЕУСТАНОВКА
+# ══════════════════════════════════════════════════════════════════════════
+menu_uninstall() {
+  clear; echo ""
+  echo -e "${R}${BOLD}  ╔══════════════════════════════════════════════════════════╗${N}"
+  echo -e "${R}${BOLD}  ║   ⚠️   УДАЛЕНИЕ / ПЕРЕУСТАНОВКА HIPR                    ║${N}"
+  echo -e "${R}${BOLD}  ╚══════════════════════════════════════════════════════════╝${N}"
+  echo ""
+  echo -e "  ${C}[1]${N}  🔄  Переустановить (запустить install.sh заново)"
+  echo -e "  ${C}[2]${N}  🗑️   Полностью удалить HIPR с сервера"
+  echo ""
+  echo -e "  ${R}[0]${N}  ← Назад"
+  echo ""
+  read -rp "  Выберите: " ch
+  case "$ch" in
+    1) _reinstall ;;
+    2) _full_uninstall ;;
+    0|q) return ;;
+  esac
+}
+
+_reinstall() {
+  echo ""
+  echo -e "  ${Y}⚠️  Будет запущен install.sh — текущая установка будет пересоздана.${N}"
+  read -rp "  Продолжить? [y/N]: " c
+  [[ "${c,,}" != "y" ]] && return
+  local install_url="https://raw.githubusercontent.com/ChernOvOne/HIPR/main/install.sh"
+  if curl -sf --max-time 5 "$install_url" > /dev/null 2>&1; then
+    bash <(curl -fsSL "$install_url")
+  else
+    echo -e "\n  ${R}❌ GitHub недоступен. Скачайте install.sh вручную.${N}"
+    sleep 3
+  fi
+}
+
+_full_uninstall() {
+  clear; echo ""
+  echo -e "  ${R}${BOLD}⚠️  ПОЛНОЕ УДАЛЕНИЕ HIPR${N}\n"
+  echo -e "  Будет удалено:"
+  echo -e "  ${DIM}• Сервисы hipr-mtg, watchdog${N}"
+  echo -e "  ${DIM}• /opt/hipr   /var/www/hipr   /usr/local/bin/hide${N}"
+  echo -e "  ${DIM}• nginx конфиги hipr (сам nginx останется)${N}"
+  echo -e "  ${DIM}• Cron задача certbot (сертификат останется)${N}"
+  echo ""
+  echo -e "  ${G}Останется:${N} ${DIM}nginx, certbot, Let's Encrypt сертификаты${N}"
+  echo ""
+  read -rp "  💾 Сохранить бэкап перед удалением? [Y/n]: " do_bak
+  if [[ "${do_bak,,}" != "n" ]]; then
+    local bak="/root/hipr_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$bak"
+    [[ -f "$CONFIG_FILE" ]]              && cp "$CONFIG_FILE" "$bak/"
+    [[ -f "$HIDE_DIR/config/mtg.toml" ]] && cp "$HIDE_DIR/config/mtg.toml" "$bak/"
+    [[ -d "$HIDE_DIR/themes/custom" ]]   && cp -r "$HIDE_DIR/themes/custom" "$bak/" 2>/dev/null || true
+    cp -r /etc/letsencrypt/live "$bak/letsencrypt" 2>/dev/null || true
+    echo -e "  ${G}💾 Бэкап: $bak${N}\n"
+  fi
+  read -rp "  Введите 'DELETE' для подтверждения: " confirm
+  [[ "$confirm" != "DELETE" ]] && { echo -e "\n  Отменено."; sleep 2; return; }
+  echo -e "\n  ${Y}🗑️  Удаляем...${N}\n"
+  systemctl stop hipr-mtg hipr-watchdog.timer 2>/dev/null || true
+  systemctl disable hipr-mtg hipr-watchdog.timer hipr-watchdog 2>/dev/null || true
+  rm -f /etc/systemd/system/hipr-mtg.service
+  rm -f /etc/systemd/system/hipr-watchdog.service
+  rm -f /etc/systemd/system/hipr-watchdog.timer
+  systemctl daemon-reload
+  echo -e "  ${G}✓${N} Сервисы удалены"
+  rm -f /etc/nginx/sites-enabled/hipr-{http,ssl,fallback}
+  rm -f /etc/nginx/sites-available/hipr-{http,ssl,fallback}
+  rm -f /etc/nginx/snippets/hipr-stream.conf
+  rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
+  sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf 2>/dev/null || true
+  nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
+  echo -e "  ${G}✓${N} nginx конфиги удалены"
+  rm -rf /opt/hipr /var/www/hipr /usr/local/bin/hide
+  echo -e "  ${G}✓${N} Файлы удалены"
+  crontab -l 2>/dev/null | grep -v certbot | crontab - 2>/dev/null || true
+  echo -e "  ${G}✓${N} Cron очищен"
+  echo ""
+  echo -e "  ${G}${BOLD}✅ HIPR полностью удалён${N}"
+  echo -e "  ${DIM}nginx и сертификаты Let's Encrypt сохранены${N}"
+  echo ""
+  exit 0
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -727,33 +849,38 @@ menu_update() {
 case "${1:-}" in
   status)
     load_cfg
-    echo -e "hipr-mtg:  $(svc hipr-mtg)"
-    echo -e "nginx:     $(svc nginx)"
-    echo -e "watchdog:  $(svc hipr-watchdog.timer 2>/dev/null || echo '—')"
-    echo -e "Домен:     ${DOMAIN:-—}"
-    echo -e "DC:        ${ACTIVE_DC:-—}"
-    echo -e "Тема:      $(active_theme)" ;;
-  logs)     tail -f "$LOG_MTG" 2>/dev/null ;;
-  restart)  systemctl restart hipr-mtg nginx; echo -e "${G}✓${N}" ;;
-  stop)     systemctl stop hipr-mtg; echo -e "${Y}⏸${N}" ;;
-  start)    systemctl start hipr-mtg; echo -e "${G}▶${N}" ;;
-  link)     load_cfg; echo "tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}" ;;
-  theme)    echo "$(active_theme)" ;;
-  qr)       load_cfg; qrencode -t ANSIUTF8 "https://t.me/proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}" 2>/dev/null ;;
-  watchdog) bash "$HIDE_DIR/bin/watchdog.sh" ;;
+    echo -e "$(svc_icon hipr-mtg)  hipr-mtg"
+    echo -e "$(svc_icon nginx)  nginx"
+    echo -e "$(svc_icon hipr-watchdog.timer 2>/dev/null)  watchdog"
+    echo -e "🌐  Домен:  ${DOMAIN:-—}"
+    echo -e "📡  DC:     ${ACTIVE_DC:-—}"
+    echo -e "🎨  Тема:   $(active_theme)" ;;
+  logs)      tail -f "$LOG_MTG" 2>/dev/null ;;
+  restart)   systemctl restart hipr-mtg nginx; echo -e "${G}✅${N}" ;;
+  stop)      systemctl stop hipr-mtg; echo -e "${Y}⏹️${N}" ;;
+  start)     systemctl start hipr-mtg; echo -e "${G}▶️${N}" ;;
+  link)      load_cfg; echo "tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}" ;;
+  theme)     echo "$(active_theme)" ;;
+  qr)        load_cfg
+             qrencode -t ANSIUTF8 \
+               "https://t.me/proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}" \
+               2>/dev/null || echo "apt install qrencode" ;;
+  watchdog)  bash "$HIDE_DIR/bin/watchdog.sh" ;;
+  uninstall) menu_uninstall ;;
   help|--help|-h)
-    echo -e "\n${BOLD}HIPR CLI${N}\n"
-    echo -e "  ${W}hide${N}           — меню"
-    echo -e "  ${W}hide status${N}    — статус"
-    echo -e "  ${W}hide logs${N}      — live лог"
-    echo -e "  ${W}hide link${N}      — ссылка tg://"
-    echo -e "  ${W}hide qr${N}        — QR-код"
-    echo -e "  ${W}hide theme${N}     — активная тема"
-    echo -e "  ${W}hide restart${N}   — перезапустить"
-    echo -e "  ${W}hide watchdog${N}  — запустить watchdog"
+    echo -e "\n${BOLD}🛡️  HIPR CLI${N} v${VERSION}\n"
+    echo -e "  ${C}hide${N}             — интерактивное меню"
+    echo -e "  ${C}hide status${N}      — быстрый статус"
+    echo -e "  ${C}hide logs${N}        — live лог mtg"
+    echo -e "  ${C}hide link${N}        — ссылка tg://"
+    echo -e "  ${C}hide qr${N}          — QR-код"
+    echo -e "  ${C}hide theme${N}       — активная тема"
+    echo -e "  ${C}hide restart${N}     — перезапустить всё"
+    echo -e "  ${C}hide watchdog${N}    — запустить watchdog"
+    echo -e "  ${C}hide uninstall${N}   — удалить HIPR"
     echo "" ;;
   "")
-    [[ $EUID -ne 0 ]] && echo -e "${Y}Рекомендуется sudo${N}\n"
+    [[ $EUID -ne 0 ]] && echo -e "${Y}⚠️  Рекомендуется sudo${N}\n"
     main_menu ;;
-  *) echo -e "${R}Неизвестно: $1${N}  →  hide help" ;;
+  *) echo -e "${R}❌ Неизвестная команда: $1${N}  →  hide help" ;;
 esac
