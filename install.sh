@@ -679,8 +679,11 @@ else
 fi
 
 # Генерируем секрет через mtg
-info "Генерируем секрет FakeTLS для домена $DOMAIN..."
-MTG_SECRET=$("$MTG_BIN" generate-secret --hex "$DOMAIN" 2>/dev/null | tr -d '\n')
+# ВАЖНО: фронтинг-домен должен быть ВНЕШНИМ сайтом (telegram.org).
+# Если использовать собственный домен — mtg при каждом соединении будет
+# пытаться подключиться к нему на порт 443, попадёт в nginx stream → себя же → петля.
+info "Генерируем секрет FakeTLS (fronting: telegram.org)..."
+MTG_SECRET=$("$MTG_BIN" generate-secret --hex "telegram.org" 2>/dev/null | tr -d '\n')
 
 if [[ -z "$MTG_SECRET" ]]; then
   # Fallback генерация если команда не сработала
