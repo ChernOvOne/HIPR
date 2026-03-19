@@ -244,8 +244,15 @@ done_step
 # ── nginx ─────────────────────────────────────────────────────────────────
 step "Настройка nginx"
 
+# Чистим остатки предыдущих (неудачных) запусков
 rm -f /etc/nginx/sites-enabled/default
-mkdir -p /var/www/certbot
+rm -f /etc/nginx/sites-enabled/hipr-ssl
+rm -f /etc/nginx/sites-available/hipr-ssl
+rm -f /etc/nginx/snippets/hipr-stream.conf
+rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
+# Убираем include hipr-stream из nginx.conf если остался с прошлого раза
+sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf
+mkdir -p /var/www/certbot /etc/nginx/snippets
 
 # HTTP — только для certbot + редирект
 cat > /etc/nginx/sites-available/hipr-http << 'EOF'
@@ -268,9 +275,14 @@ server {
 EOF
 
 ln -sf /etc/nginx/sites-available/hipr-http /etc/nginx/sites-enabled/
-nginx -t 2>/dev/null || err "Ошибка конфига nginx"
-systemctl restart nginx
-ok "nginx запущен (HTTP)"
+if nginx -t 2>/tmp/hipr-nginx-http.log; then
+  systemctl restart nginx
+  ok "nginx запущен (HTTP)"
+else
+  echo -e "${R}nginx -t вывод:${N}"
+  cat /tmp/hipr-nginx-http.log
+  err "Ошибка конфига nginx — см. вывод выше"
+fi
 done_step
 
 # ── TLS сертификат ────────────────────────────────────────────────────────
