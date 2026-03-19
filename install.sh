@@ -155,31 +155,506 @@ EOF
 ok "Конфиг: $CONFIG_FILE"
 done_step
 
-# ── Скачиваем файлы с GitHub ──────────────────────────────────────────────
+# ── Скачиваем hide с GitHub, темы встроены в скрипт ─────────────────────
 step "Загрузка файлов"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
-if [[ -f "$SCRIPT_DIR/hide" && -d "$SCRIPT_DIR/themes" ]]; then
-  info "Локальный репозиторий — копируем"
+if [[ -f "$SCRIPT_DIR/hide" ]]; then
+  info "Локальный репозиторий — копируем hide"
   cp "$SCRIPT_DIR/hide" "$HIDE_BIN"
-  cp -r "$SCRIPT_DIR/themes"/. "$HIDE_DIR/themes/"
-  ok "Скопировано локально"
+  ok "hide скопирован локально"
 else
-  info "Скачиваем с GitHub..."
+  info "Скачиваем hide с GitHub..."
   curl -fsSL "$REPO_RAW/hide" -o "$HIDE_BIN" || err "Не удалось скачать hide"
   ok "hide скачан"
+fi
+chmod +x "$HIDE_BIN"
 
-  for theme in blog freelancer coming-soon; do
-    mkdir -p "$HIDE_DIR/themes/$theme"
-    for f in index.html theme.json about.html; do
-      curl -fsSL "$REPO_RAW/themes/$theme/$f" \
-        -o "$HIDE_DIR/themes/$theme/$f" 2>/dev/null || true
-    done
-    [[ -f "$HIDE_DIR/themes/$theme/index.html" ]] && ok "Тема: $theme"
-  done
+# Темы встроены прямо в установщик — не зависим от GitHub
+info "Разворачиваем темы..."
+
+mkdir -p "$HIDE_DIR/themes/blog"
+cat > "$HIDE_DIR/themes/blog/theme.json" << 'BLOGTHEMEJSON'
+{"name":"blog","description":"Блог разработчика DevNotes","author":"HIPR","version":"1.0","preview":"Технический блог: Linux, Go, DevOps","pages":["index.html","about.html"]}
+BLOGTHEMEJSON
+cat > "$HIDE_DIR/themes/blog/index.html" << 'BLOGEOF'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Заметки о разработке, Linux и DevOps">
+<title>DevNotes — заметки разработчика</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;color:#222;line-height:1.7}
+a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}
+header{background:#fff;border-bottom:1px solid #e0e0e0;position:sticky;top:0;z-index:10}
+.nav{max-width:880px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:54px;padding:0 1.5rem}
+.logo{font-weight:700;font-size:1.05rem;color:#111}.logo span{color:#0066cc}
+nav{display:flex;gap:1.5rem}nav a{color:#555;font-size:.875rem;font-weight:500}nav a:hover{color:#111;text-decoration:none}
+.hero{background:#fff;border-bottom:1px solid #e0e0e0;padding:2.5rem 1.5rem}
+.hero-inner{max-width:880px;margin:0 auto}
+.hero h1{font-size:1.75rem;font-weight:700;margin-bottom:.4rem;letter-spacing:-.5px}
+.hero p{color:#666;font-size:1rem}
+main{max-width:880px;margin:0 auto;padding:2rem 1.5rem}
+.layout{display:grid;grid-template-columns:1fr 280px;gap:2rem}
+@media(max-width:680px){.layout{grid-template-columns:1fr}}
+.posts{display:flex;flex-direction:column;gap:1.25rem}
+article{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:1.5rem;transition:border-color .15s}
+article:hover{border-color:#bbb}
+.meta{font-size:.78rem;color:#999;margin-bottom:.5rem;display:flex;gap:.75rem;align-items:center}
+.cat{background:#f0f4ff;color:#0055bb;padding:2px 8px;border-radius:4px;font-size:.72rem;font-weight:600}
+article h2{font-size:1.05rem;font-weight:600;margin-bottom:.5rem;line-height:1.4}
+article h2 a{color:#111}article h2 a:hover{color:#0066cc;text-decoration:none}
+article p{font-size:.875rem;color:#666;line-height:1.6}
+.tags{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.85rem}
+.tag{background:#f5f5f5;color:#555;font-size:.72rem;padding:2px 8px;border-radius:4px;border:1px solid #e5e5e5}
+.sidebar{display:flex;flex-direction:column;gap:1.25rem}
+.widget{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:1.25rem}
+.widget h3{font-size:.85rem;font-weight:700;color:#333;text-transform:uppercase;letter-spacing:.5px;margin-bottom:.85rem;padding-bottom:.6rem;border-bottom:1px solid #f0f0f0}
+.widget ul{list-style:none}.widget ul li{padding:.3rem 0;font-size:.875rem;border-bottom:1px solid #f8f8f8}
+.widget ul li:last-child{border:none}
+.about-text{font-size:.85rem;color:#666;line-height:1.6}
+footer{text-align:center;padding:2rem;color:#aaa;font-size:.78rem;border-top:1px solid #e0e0e0;margin-top:1rem;background:#fff}
+</style>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="logo">Dev<span>Notes</span></div>
+    <nav><a href="/">Главная</a><a href="/about.html">Обо мне</a></nav>
+  </div>
+</header>
+<div class="hero"><div class="hero-inner">
+  <h1>Заметки о разработке</h1>
+  <p>Linux, сети, Go и всё что между ними</p>
+</div></div>
+<main><div class="layout">
+  <div class="posts">
+    <article>
+      <div class="meta"><span>14 ноября 2024</span><span>·</span><span>9 мин</span><span class="cat">DevOps</span></div>
+      <h2><a href="#">Настройка nginx как reverse proxy: полный разбор</a></h2>
+      <p>Конфигурация nginx для проксирования, SSL termination, кеширование upstream-ответов и типичные ошибки в продакшне которые я видел чаще всего.</p>
+      <div class="tags"><span class="tag">nginx</span><span class="tag">linux</span><span class="tag">ssl</span></div>
+    </article>
+    <article>
+      <div class="meta"><span>29 октября 2024</span><span>·</span><span>6 мин</span><span class="cat">Go</span></div>
+      <h2><a href="#">Go для системных задач: личный опыт после Python</a></h2>
+      <p>Три года писал всё на Python — скрипты, утилиты, небольшие сервисы. Попробовал Go и теперь понимаю где что реально лучше.</p>
+      <div class="tags"><span class="tag">golang</span><span class="tag">python</span><span class="tag">cli</span></div>
+    </article>
+    <article>
+      <div class="meta"><span>7 октября 2024</span><span>·</span><span>13 мин</span><span class="cat">Security</span></div>
+      <h2><a href="#">TLS 1.3: что изменилось и как правильно настроить сервер</a></h2>
+      <p>Разбираем новый handshake, отказ от RSA key exchange, 0-RTT и почему правильная настройка шифров важнее чем кажется.</p>
+      <div class="tags"><span class="tag">tls</span><span class="tag">security</span><span class="tag">nginx</span></div>
+    </article>
+    <article>
+      <div class="meta"><span>20 сентября 2024</span><span>·</span><span>7 мин</span><span class="cat">Linux</span></div>
+      <h2><a href="#">systemd юниты: всё что нужно для повседневной работы</a></h2>
+      <p>Написание unit-файлов, зависимости между сервисами, автозапуск, ограничение ресурсов и почему journalctl лучше tail -f.</p>
+      <div class="tags"><span class="tag">systemd</span><span class="tag">linux</span></div>
+    </article>
+    <article>
+      <div class="meta"><span>3 сентября 2024</span><span>·</span><span>5 мин</span><span class="cat">Networking</span></div>
+      <h2><a href="#">iptables vs nftables: что выбрать в 2024</a></h2>
+      <p>Сравниваю синтаксис, производительность и удобство. Для новых серверов уже нет причин оставаться на iptables.</p>
+      <div class="tags"><span class="tag">networking</span><span class="tag">firewall</span><span class="tag">linux</span></div>
+    </article>
+  </div>
+  <aside class="sidebar">
+    <div class="widget">
+      <h3>Об авторе</h3>
+      <p class="about-text">Бэкенд разработчик, пишу про Linux и сети. Блог — личный архив заметок.</p>
+    </div>
+    <div class="widget">
+      <h3>Темы</h3>
+      <ul>
+        <li><a href="#">Linux &amp; sysadmin</a></li>
+        <li><a href="#">Go / Golang</a></li>
+        <li><a href="#">nginx &amp; веб</a></li>
+        <li><a href="#">Безопасность</a></li>
+        <li><a href="#">Сети</a></li>
+        <li><a href="#">DevOps</a></li>
+      </ul>
+    </div>
+  </aside>
+</div></main>
+<footer>© 2024 DevNotes · Сделано с кофе и vim</footer>
+</body></html>
+
+BLOGEOF
+cat > "$HIDE_DIR/themes/blog/about.html" << 'BLOGABOUTEOF'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Обо мне — DevNotes</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f5f5f5;color:#222;line-height:1.7}
+a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}
+header{background:#fff;border-bottom:1px solid #e0e0e0;position:sticky;top:0;z-index:10}
+.nav{max-width:880px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:54px;padding:0 1.5rem}
+.logo{font-weight:700;font-size:1.05rem;color:#111}.logo span{color:#0066cc}
+nav{display:flex;gap:1.5rem}nav a{color:#555;font-size:.875rem;font-weight:500}
+.hero{background:#fff;border-bottom:1px solid #e0e0e0;padding:2.5rem 1.5rem}
+.hero-inner{max-width:880px;margin:0 auto}
+.hero h1{font-size:1.75rem;font-weight:700;margin-bottom:.4rem}
+.hero p{color:#666}
+main{max-width:680px;margin:2rem auto;padding:0 1.5rem}
+.card{background:#fff;border:1px solid #e0e0e0;border-radius:8px;padding:2rem;margin-bottom:1.5rem}
+.card h2{font-size:1.1rem;font-weight:700;margin-bottom:1rem;color:#111}
+.card p{color:#555;font-size:.9rem;margin-bottom:.75rem}
+.stack{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.75rem}
+.tag{background:#f0f4ff;color:#0055bb;padding:3px 10px;border-radius:4px;font-size:.75rem;font-weight:600}
+footer{text-align:center;padding:2rem;color:#aaa;font-size:.78rem;border-top:1px solid #e0e0e0;background:#fff;margin-top:1rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="logo">Dev<span>Notes</span></div>
+    <nav><a href="/">Главная</a><a href="/about.html">Обо мне</a></nav>
+  </div>
+</header>
+<div class="hero"><div class="hero-inner">
+  <h1>Обо мне</h1>
+  <p>Бэкенд разработчик, люблю Linux и инфраструктуру</p>
+</div></div>
+<main>
+  <div class="card">
+    <h2>Кто я</h2>
+    <p>Пишу бэкенд уже 6 лет. Начинал с Python, последние три года активно использую Go для системных задач и сервисов.</p>
+    <p>Этот блог — личный архив заметок. Пишу когда решаю интересную задачу и хочу зафиксировать подход.</p>
+  </div>
+  <div class="card">
+    <h2>Стек</h2>
+    <div class="stack">
+      <span class="tag">Go</span><span class="tag">Python</span><span class="tag">Linux</span>
+      <span class="tag">nginx</span><span class="tag">PostgreSQL</span><span class="tag">Docker</span>
+      <span class="tag">systemd</span><span class="tag">nftables</span>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Контакт</h2>
+    <p>GitHub: <a href="#">github.com/devnotes</a></p>
+    <p>Email: dev@example.com</p>
+  </div>
+</main>
+<footer>© 2024 DevNotes · Сделано с кофе и vim</footer>
+</body></html>
+
+BLOGABOUTEOF
+ok "Тема: blog"
+
+mkdir -p "$HIDE_DIR/themes/freelancer"
+cat > "$HIDE_DIR/themes/freelancer/theme.json" << 'FREELANCERTHEMEJSON'
+{"name":"freelancer","description":"Страница фрилансера","author":"HIPR","version":"1.0","preview":"Портфолио: веб, мобайл, API","pages":["index.html"]}
+FREELANCERTHEMEJSON
+cat > "$HIDE_DIR/themes/freelancer/index.html" << 'FREELANCEREOF'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Фриланс разработчик — веб и мобильные приложения">
+<title>Алексей Соколов — Разработчик</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a2e;line-height:1.6;background:#f8f9ff}
+a{color:#4361ee;text-decoration:none}a:hover{text-decoration:underline}
+header{background:#fff;border-bottom:1px solid #e8eaf6;padding:0 2rem;position:sticky;top:0;z-index:10}
+.nav{max-width:960px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:60px}
+.logo{font-weight:800;font-size:1.1rem;letter-spacing:-.5px}
+nav a{margin-left:2rem;color:#555;font-size:.875rem;font-weight:500}
+.hero{background:linear-gradient(135deg,#4361ee 0%,#3a0ca3 100%);color:#fff;padding:5rem 2rem;text-align:center}
+.hero-inner{max-width:680px;margin:0 auto}
+.badge{display:inline-block;background:rgba(255,255,255,.2);padding:4px 14px;border-radius:20px;font-size:.78rem;font-weight:600;letter-spacing:.5px;margin-bottom:1.5rem}
+.hero h1{font-size:2.5rem;font-weight:800;margin-bottom:1rem;line-height:1.2}
+.hero p{font-size:1.1rem;opacity:.9;margin-bottom:2rem}
+.btns{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+.btn{padding:.75rem 2rem;border-radius:8px;font-weight:600;font-size:.9rem;cursor:pointer}
+.btn-white{background:#fff;color:#4361ee}
+.btn-outline{background:transparent;color:#fff;border:2px solid rgba(255,255,255,.6)}
+section{padding:4rem 2rem}
+.sec-inner{max-width:960px;margin:0 auto}
+.sec-title{font-size:1.5rem;font-weight:800;margin-bottom:.5rem}
+.sec-sub{color:#666;margin-bottom:2.5rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.5rem}
+.card{background:#fff;border-radius:12px;padding:1.75rem;border:1px solid #e8eaf6;transition:box-shadow .2s}
+.card:hover{box-shadow:0 4px 20px rgba(67,97,238,.1)}
+.card-icon{font-size:2rem;margin-bottom:1rem}
+.card h3{font-size:1rem;font-weight:700;margin-bottom:.5rem}
+.card p{font-size:.875rem;color:#666}
+.stack{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+.tag{background:#f0f3ff;color:#4361ee;padding:3px 10px;border-radius:6px;font-size:.75rem;font-weight:600}
+.projects{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.5rem}
+.proj{background:#fff;border-radius:12px;border:1px solid #e8eaf6;overflow:hidden}
+.proj-img{height:160px;display:flex;align-items:center;justify-content:center;font-size:3rem}
+.proj-img.blue{background:linear-gradient(135deg,#667eea,#764ba2)}
+.proj-img.green{background:linear-gradient(135deg,#43e97b,#38f9d7)}
+.proj-img.orange{background:linear-gradient(135deg,#f093fb,#f5576c)}
+.proj-body{padding:1.25rem}
+.proj-body h3{font-weight:700;margin-bottom:.4rem}
+.proj-body p{font-size:.85rem;color:#666}
+.contact-bg{background:#1a1a2e;color:#fff;text-align:center}
+.contact-bg .sec-sub{color:rgba(255,255,255,.6)}
+.input{width:100%;padding:.75rem 1rem;border-radius:8px;border:1px solid #e8eaf6;font-size:.9rem;margin-bottom:1rem;font-family:inherit}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;max-width:560px;margin:0 auto}
+@media(max-width:600px){.form-grid{grid-template-columns:1fr}.hero h1{font-size:1.8rem}}
+footer{text-align:center;padding:1.5rem;background:#111;color:#555;font-size:.78rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="logo">Алексей<span style="color:#4361ee">.</span>dev</div>
+    <nav>
+      <a href="#services">Услуги</a>
+      <a href="#projects">Проекты</a>
+      <a href="#contact">Контакт</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div class="badge">✦ Доступен для новых проектов</div>
+    <h1>Разрабатываю веб-сервисы и мобильные приложения</h1>
+    <p>5 лет опыта · 40+ завершённых проектов · React, Node.js, Flutter</p>
+    <div class="btns">
+      <a href="#contact" class="btn btn-white">Обсудить проект</a>
+      <a href="#projects" class="btn btn-outline">Посмотреть работы</a>
+    </div>
+  </div>
+</div>
+
+<section id="services" style="background:#fff">
+  <div class="sec-inner">
+    <div class="sec-title">Чем могу помочь</div>
+    <div class="sec-sub">Полный цикл разработки от идеи до продакшна</div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">🌐</div>
+        <h3>Веб-приложения</h3>
+        <p>SPA, лендинги, административные панели, корпоративные сайты</p>
+        <div class="stack"><span class="tag">React</span><span class="tag">Next.js</span><span class="tag">TypeScript</span></div>
+      </div>
+      <div class="card">
+        <div class="card-icon">📱</div>
+        <h3>Мобильные приложения</h3>
+        <p>Кроссплатформенные приложения под iOS и Android</p>
+        <div class="stack"><span class="tag">Flutter</span><span class="tag">Dart</span><span class="tag">Firebase</span></div>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚙️</div>
+        <h3>Бэкенд и API</h3>
+        <p>REST/GraphQL API, микросервисы, интеграции с внешними сервисами</p>
+        <div class="stack"><span class="tag">Node.js</span><span class="tag">PostgreSQL</span><span class="tag">Docker</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="projects">
+  <div class="sec-inner">
+    <div class="sec-title">Последние проекты</div>
+    <div class="sec-sub">Некоторые из недавних работ</div>
+    <div class="projects">
+      <div class="proj">
+        <div class="proj-img blue">📊</div>
+        <div class="proj-body">
+          <h3>Аналитическая платформа</h3>
+          <p>Дашборд для мониторинга бизнес-метрик в реальном времени. React + D3.js + WebSocket</p>
+        </div>
+      </div>
+      <div class="proj">
+        <div class="proj-img green">🛒</div>
+        <div class="proj-body">
+          <h3>Мобильный маркетплейс</h3>
+          <p>Flutter-приложение с каталогом, корзиной и оплатой. 10k+ установок</p>
+        </div>
+      </div>
+      <div class="proj">
+        <div class="proj-img orange">💬</div>
+        <div class="proj-body">
+          <h3>CRM для агентства</h3>
+          <p>Система управления клиентами и сделками. Node.js + PostgreSQL + React</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="contact-bg">
+  <div class="sec-inner">
+    <div class="sec-title">Свяжитесь со мной</div>
+    <div class="sec-sub">Расскажите о вашем проекте — отвечу в течение 24 часов</div>
+    <div style="max-width:560px;margin:0 auto">
+      <div class="form-grid">
+        <input class="input" placeholder="Ваше имя" type="text">
+        <input class="input" placeholder="Email" type="email">
+      </div>
+      <input class="input" placeholder="Тема" type="text" style="display:block;max-width:560px;margin:0 auto 1rem">
+      <textarea class="input" rows="4" placeholder="Расскажите о проекте..." style="display:block;max-width:560px;margin:0 auto 1rem;resize:vertical"></textarea>
+      <div style="text-align:center"><button class="btn btn-white" style="background:#4361ee;color:#fff">Отправить сообщение</button></div>
+    </div>
+  </div>
+</section>
+
+<footer>© 2024 alexei.dev · Все права защищены</footer>
+</body></html>
+
+FREELANCEREOF
+ok "Тема: freelancer"
+
+mkdir -p "$HIDE_DIR/themes/coming-soon"
+cat > "$HIDE_DIR/themes/coming-soon/theme.json" << 'COMINGTHEMEJSON'
+{"name":"coming-soon","description":"Страница «Скоро открытие»","author":"HIPR","version":"1.0","preview":"Таймер обратного отсчёта, подписка на email","pages":["index.html"]}
+COMINGTHEMEJSON
+cat > "$HIDE_DIR/themes/coming-soon/index.html" << 'COMINGEOF'
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Скоро открытие — подпишитесь чтобы узнать первым">
+<title>Скоро открытие</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#0f0f1a;
+  color:#fff;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:100vh;
+  text-align:center;
+  padding:2rem;
+  overflow:hidden;
+}
+.bg{
+  position:fixed;inset:0;z-index:0;
+  background:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,.15) 0%,transparent 60%),
+             radial-gradient(ellipse at 80% 20%,rgba(168,85,247,.12) 0%,transparent 60%),
+             radial-gradient(ellipse at 60% 80%,rgba(59,130,246,.1) 0%,transparent 60%);
+}
+.content{position:relative;z-index:1;max-width:560px;width:100%}
+.logo{
+  display:inline-flex;align-items:center;gap:.6rem;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  padding:.5rem 1.25rem;border-radius:50px;margin-bottom:3rem;
+  font-size:.85rem;font-weight:600;letter-spacing:.5px;color:rgba(255,255,255,.8)
+}
+.logo-dot{width:8px;height:8px;border-radius:50%;background:#6366f1;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+h1{
+  font-size:clamp(2rem,5vw,3.25rem);font-weight:800;
+  line-height:1.15;margin-bottom:1.25rem;
+  background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,.7) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text
+}
+.sub{color:rgba(255,255,255,.5);font-size:1.05rem;margin-bottom:3rem;line-height:1.6}
+.counter{display:flex;justify-content:center;gap:1.5rem;margin-bottom:3rem;flex-wrap:wrap}
+.count-item{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;padding:1.25rem 1.5rem;min-width:80px}
+.count-num{font-size:2rem;font-weight:800;line-height:1;color:#a5b4fc}
+.count-label{font-size:.7rem;color:rgba(255,255,255,.4);margin-top:.3rem;text-transform:uppercase;letter-spacing:.5px}
+.form{display:flex;gap:.75rem;max-width:420px;margin:0 auto 1.5rem;flex-wrap:wrap;justify-content:center}
+.input{
+  flex:1;min-width:200px;padding:.8rem 1.25rem;border-radius:10px;
+  border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);
+  color:#fff;font-size:.9rem;outline:none;font-family:inherit
+}
+.input::placeholder{color:rgba(255,255,255,.35)}
+.input:focus{border-color:rgba(99,102,241,.6);background:rgba(255,255,255,.1)}
+.btn{
+  padding:.8rem 1.75rem;border-radius:10px;border:none;
+  background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+  font-weight:700;font-size:.9rem;cursor:pointer;white-space:nowrap;font-family:inherit
+}
+.btn:hover{opacity:.9}
+.hint{color:rgba(255,255,255,.3);font-size:.78rem}
+.socials{display:flex;gap:1rem;justify-content:center;margin-top:3rem}
+.soc{
+  width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  color:rgba(255,255,255,.5);font-size:.9rem;transition:.2s
+}
+.soc:hover{background:rgba(255,255,255,.12);color:#fff}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="content">
+  <div class="logo">
+    <span class="logo-dot"></span>
+    В разработке
+  </div>
+  <h1>Что-то крутое скоро появится</h1>
+  <p class="sub">Мы работаем над чем-то особенным.<br>Подпишитесь — пришлём письмо в день запуска.</p>
+
+  <div class="counter">
+    <div class="count-item">
+      <div class="count-num" id="days">14</div>
+      <div class="count-label">Дней</div>
+    </div>
+    <div class="count-item">
+      <div class="count-num" id="hours">08</div>
+      <div class="count-label">Часов</div>
+    </div>
+    <div class="count-item">
+      <div class="count-num" id="mins">23</div>
+      <div class="count-label">Минут</div>
+    </div>
+    <div class="count-item">
+      <div class="count-num" id="secs">41</div>
+      <div class="count-label">Секунд</div>
+    </div>
+  </div>
+
+  <div class="form">
+    <input class="input" type="email" placeholder="Ваш email">
+    <button class="btn">Уведомить меня</button>
+  </div>
+  <p class="hint">Никакого спама. Только одно письмо в день запуска.</p>
+
+  <div class="socials">
+    <a href="#" class="soc">TG</a>
+    <a href="#" class="soc">GH</a>
+    <a href="#" class="soc">TW</a>
+  </div>
+</div>
+
+<script>
+  const launch = new Date(Date.now() + 14*24*60*60*1000);
+  function tick(){
+    const d = launch - Date.now();
+    if(d < 0) return;
+    document.getElementById('days').textContent  = String(Math.floor(d/864e5)).padStart(2,'0');
+    document.getElementById('hours').textContent = String(Math.floor(d%864e5/36e5)).padStart(2,'0');
+    document.getElementById('mins').textContent  = String(Math.floor(d%36e5/6e4)).padStart(2,'0');
+    document.getElementById('secs').textContent  = String(Math.floor(d%6e4/1e3)).padStart(2,'0');
+  }
+  tick(); setInterval(tick,1000);
+</script>
+</body></html>
+
+COMINGEOF
+ok "Тема: coming-soon"
+
+# Если локальный репозиторий содержит кастомные темы — добавляем их
+if [[ -d "$SCRIPT_DIR/themes" ]]; then
+  cp -rn "$SCRIPT_DIR/themes"/. "$HIDE_DIR/themes/" 2>/dev/null || true
+  ok "Локальные темы добавлены"
 fi
 
-chmod +x "$HIDE_BIN"
 done_step
 
 # ── Установка mtg ─────────────────────────────────────────────────────────
@@ -416,6 +891,10 @@ cat > "$HIDE_DIR/config/mtg.toml" << EOF
 secret = "$MTG_SECRET"
 
 bind-to = "127.0.0.1:$MTG_PORT"
+
+# Не-MTProto соединения (браузер, active probe ТСПУ) → сайт-обманка
+[proxy]
+fallback = "127.0.0.1:8443"
 
 # Telegram DC — меняется через hide → Настройки → Сменить DC
 [upstream]
