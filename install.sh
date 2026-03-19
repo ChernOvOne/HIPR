@@ -129,17 +129,24 @@ apt-get install -y -qq \
   fail2ban ufw unzip 2>/dev/null
 ok "Пакеты установлены"
 
-# Фикс DNS: некоторые VPS-хостеры ставят attempts:1 — при недоступности
-# первого резолвера система не переходит ко второму. Добавляем 1.1.1.1 первым.
-if grep -q 'attempts:1' /etc/resolv.conf 2>/dev/null; then
-  info "Обнаружен DNS attempts:1 — добавляем публичный резолвер"
-  if ! grep -q '1\.1\.1\.1' /etc/resolv.conf; then
-    # Вставляем 1.1.1.1 перед первой строкой nameserver
-    sed -i '/^nameserver/i nameserver 1.1.1.1' /etc/resolv.conf
-    # Убираем дубль если вдруг уже был
-    awk '!seen[$0]++' /etc/resolv.conf > /tmp/resolv.tmp && mv /tmp/resolv.tmp /etc/resolv.conf
-  fi
-  ok "DNS: 1.1.1.1 добавлен первым"
+# DNS: гарантируем что резолвер работает.
+# Некоторые VPS-хостеры ставят только свои серверы с attempts:1 — при сбое
+# первого сервера система не переходит ко второму. Перезаписываем resolv.conf
+# с публичными серверами первыми.
+_old_ns=$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | tr '\n' ' ')
+cat > /etc/resolv.conf << EOF
+nameserver 1.1.1.1
+nameserver 8.8.8.8
+$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | grep -v '1\.1\.1\.1\|8\.8\.8\.8' || true)
+options timeout:2
+options rotate
+EOF
+ok "DNS: resolv.conf настроен (1.1.1.1, 8.8.8.8 + хостер)"
+# Проверяем
+if dig telegram.org +short +time=3 > /dev/null 2>&1; then
+  ok "DNS: telegram.org резолвится"
+else
+  warn "DNS: telegram.org не резолвится — mtg не сможет установить FakeTLS"
 fi
 done_step
 
@@ -897,6 +904,8 @@ step "Настройка mtg как systemd сервиса"
 source "$CONFIG_FILE"
 
 # Конфиг для mtg v2
+# mtg использует собственный DNS-резолвер (игнорирует /etc/resolv.conf).
+# Явно задаём DoH-серверы чтобы FakeTLS-рукопожатие с telegram.org работало.
 cat > "$HIDE_DIR/config/mtg.toml" << EOF
 # HIPR — mtg конфигурация
 # Документация: https://github.com/9seconds/mtg
@@ -904,6 +913,13 @@ cat > "$HIDE_DIR/config/mtg.toml" << EOF
 secret = "$MTG_SECRET"
 
 bind-to = "127.0.0.1:$MTG_PORT"
+
+[network]
+  [network.doh]
+    endpoints = [
+      "https://1.1.1.1/dns-query",
+      "https://8.8.8.8/dns-query"
+    ]
 
 # Telegram DC — меняется через hide → Настройки → Сменить DC
 [upstream]
