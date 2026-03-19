@@ -286,14 +286,15 @@ read -rp "  DNS настроен? [Y/n]: " DNS_OK
 
 CERT_OK=false
 if [[ "${DNS_OK,,}" != "n" ]]; then
-  if certbot certonly \
+  certbot certonly \
        --webroot -w /var/www/certbot \
        --non-interactive --agree-tos \
        --email "$LE_EMAIL" \
-       -d "$DOMAIN" 2>&1 | tail -5; then
+       -d "$DOMAIN" > /tmp/hipr-certbot.log 2>&1 && CERT_OK=true || true
+  tail -5 /tmp/hipr-certbot.log
 
+  if [[ "$CERT_OK" == "true" ]]; then
     CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
-    CERT_OK=true
     ok "Сертификат получен"
 
     # HTTPS + stream через nginx
@@ -344,7 +345,21 @@ EOF
 
     # Проверяем есть ли stream модуль
     if nginx -V 2>&1 | grep -q 'stream'; then
-      cat > /etc/nginx/modules-enabled/hipr-stream.conf 2>/dev/null || true
+      # Активируем stream-модуль если он динамический и ещё не загружен
+      STREAM_MOD=""
+      for _p in \
+          /usr/lib/nginx/modules/ngx_stream_module.so \
+          /usr/share/nginx/modules/ngx_stream_module.so; do
+        [[ -f "$_p" ]] && { STREAM_MOD="$_p"; break; }
+      done
+      if [[ -n "$STREAM_MOD" ]]; then
+        if ! grep -rl 'ngx_stream_module' /etc/nginx/modules-enabled/ 2>/dev/null | grep -q .; then
+          echo "load_module $STREAM_MOD;" > /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
+          ok "Stream модуль активирован: $STREAM_MOD"
+        else
+          ok "Stream модуль уже загружен"
+        fi
+      fi
       cat > /etc/nginx/snippets/hipr-stream.conf << EOF
 # stream блок для HIPR — роутинг порта 443
 # mtg обрабатывает TLS сам, nginx только проксирует TCP
@@ -415,8 +430,14 @@ EOF
       ok "HAProxy настроен (порт 443 → mtg)"
     fi
 
-    nginx -t 2>/dev/null && systemctl reload nginx
-    ok "nginx перезагружен"
+    if nginx -t 2>/tmp/hipr-nginx-test.log; then
+      systemctl reload nginx
+      ok "nginx перезагружен"
+    else
+      info "Ошибка конфигурации nginx — детали:"
+      cat /tmp/hipr-nginx-test.log >&2
+      err "nginx -t упал. Исправьте и запустите: nginx -t && systemctl reload nginx"
+    fi
 
     # Авто-обновление
     (crontab -l 2>/dev/null | grep -v certbot
