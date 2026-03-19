@@ -128,6 +128,19 @@ apt-get install -y -qq \
   qrencode xxd openssl python3 \
   fail2ban ufw unzip 2>/dev/null
 ok "Пакеты установлены"
+
+# Фикс DNS: некоторые VPS-хостеры ставят attempts:1 — при недоступности
+# первого резолвера система не переходит ко второму. Добавляем 1.1.1.1 первым.
+if grep -q 'attempts:1' /etc/resolv.conf 2>/dev/null; then
+  info "Обнаружен DNS attempts:1 — добавляем публичный резолвер"
+  if ! grep -q '1\.1\.1\.1' /etc/resolv.conf; then
+    # Вставляем 1.1.1.1 перед первой строкой nameserver
+    sed -i '/^nameserver/i nameserver 1.1.1.1' /etc/resolv.conf
+    # Убираем дубль если вдруг уже был
+    awk '!seen[$0]++' /etc/resolv.conf > /tmp/resolv.tmp && mv /tmp/resolv.tmp /etc/resolv.conf
+  fi
+  ok "DNS: 1.1.1.1 добавлен первым"
+fi
 done_step
 
 # ── Директории и конфиг ───────────────────────────────────────────────────
@@ -827,26 +840,23 @@ EOF
 
     ln -sf /etc/nginx/sites-available/hipr-ssl /etc/nginx/sites-enabled/
 
-    # nginx stream — слушает 443, проксирует TCP в mtg
-    # libnginx-mod-stream уже установлен выше и сам создал load_module конфиг
-    # Убеждаемся что модуль активен
-    if ! dpkg -l libnginx-mod-stream 2>/dev/null | grep -q '^ii'; then
-      info "libnginx-mod-stream не установлен — доустанавливаем..."
-      apt-get install -y -qq libnginx-mod-stream 2>/dev/null
-    fi
-
+    # nginx stream: SNI-роутинг по фронтинг-домену
+    # Telegram-клиент → SNI=telegram.org → mtg:2398
+    # Браузер/ТСПУ  → SNI=домена → nginx:8443 (сайт-обманка)
     mkdir -p /etc/nginx/snippets
     cat > /etc/nginx/snippets/hipr-stream.conf << 'STREAMEOF'
 stream {
-    upstream hipr_mtg {
-        server 127.0.0.1:2398;
+    map $ssl_preread_server_name $hipr_backend {
+        telegram.org    127.0.0.1:2398;
+        default         127.0.0.1:8443;
     }
 
     server {
         listen 443;
         listen [::]:443;
-        proxy_pass hipr_mtg;
-        proxy_timeout 10m;
+        proxy_pass      $hipr_backend;
+        ssl_preread     on;
+        proxy_timeout   10m;
         proxy_connect_timeout 10s;
     }
 }
@@ -894,10 +904,6 @@ cat > "$HIDE_DIR/config/mtg.toml" << EOF
 secret = "$MTG_SECRET"
 
 bind-to = "127.0.0.1:$MTG_PORT"
-
-# Не-MTProto соединения (браузер, active probe ТСПУ) → сайт-обманка
-[proxy]
-fallback = "127.0.0.1:8443"
 
 # Telegram DC — меняется через hide → Настройки → Сменить DC
 [upstream]
