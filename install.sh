@@ -6,7 +6,7 @@
 #  Одна команда:
 #  bash <(curl -fsSL https://raw.githubusercontent.com/ChernOvOne/HIPR/main/install.sh)
 # ═══════════════════════════════════════════════════════════════════════════
-set -euo pipefail
+set -uo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/ChernOvOne/HIPR/main"
 HIDE_DIR="/opt/hipr"
@@ -26,6 +26,7 @@ ok()        { echo -e "${C}│${N}  ${G}✓${N}  $*"; }
 info()      { echo -e "${C}│${N}  ${Y}→${N}  $*"; }
 done_step() { echo -e "${C}└─ ${G}готово${N}"; }
 err()       { echo -e "\n${R}✗  ОШИБКА: $*${N}\n"; exit 1; }
+warn()      { echo -e "${C}│${N}  ${R}✗${N}  $*"; }
 
 # ── Баннер ────────────────────────────────────────────────────────────────
 clear
@@ -279,9 +280,9 @@ if nginx -t 2>/tmp/hipr-nginx-http.log; then
   systemctl restart nginx
   ok "nginx запущен (HTTP)"
 else
-  echo -e "${R}nginx -t вывод:${N}"
-  cat /tmp/hipr-nginx-http.log
-  err "Ошибка конфига nginx — см. вывод выше"
+  warn "nginx -t упал (HTTP конфиг) — детали:"
+  cat /tmp/hipr-nginx-http.log >&2
+  warn "Продолжаем установку, nginx нужно починить вручную после"
 fi
 done_step
 
@@ -384,9 +385,9 @@ STREAMEOF
       systemctl reload nginx
       ok "nginx перезагружен"
     else
-      info "Ошибка конфигурации nginx — детали:"
+      warn "nginx -t упал — детали:"
       cat /tmp/hipr-nginx-test.log >&2
-      err "nginx -t упал. Исправьте и запустите: nginx -t && systemctl reload nginx"
+      warn "nginx не перезагружен. После установки: nginx -t && systemctl reload nginx"
     fi
 
     # Авто-обновление
@@ -455,16 +456,15 @@ EOF
 
 systemctl daemon-reload
 systemctl enable hipr-mtg 2>/dev/null
+touch "$HIDE_DIR/logs/mtg.log" "$HIDE_DIR/logs/mtg-error.log"
 
-if [[ "$CERT_OK" == "true" ]]; then
-  systemctl start hipr-mtg && sleep 2
-  if systemctl is-active --quiet hipr-mtg; then
-    ok "hipr-mtg запущен"
-  else
-    info "Сервис не запустился — проверьте: journalctl -u hipr-mtg -n 20"
-  fi
+systemctl start hipr-mtg
+sleep 2
+if systemctl is-active --quiet hipr-mtg; then
+  ok "hipr-mtg запущен"
 else
-  info "mtg будет запущен после получения сертификата"
+  warn "hipr-mtg не запустился — проверьте: journalctl -u hipr-mtg -n 20"
+  journalctl -u hipr-mtg -n 10 --no-pager 2>/dev/null || true
 fi
 done_step
 
@@ -646,3 +646,20 @@ if [[ "$CERT_OK" == "false" ]]; then
   echo -e "  Потом:    ${W}hide${N} → Настройки → Получить сертификат"
   echo ""
 fi
+
+# ── Итоговая диагностика ──────────────────────────────────────────────────
+echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+echo -e "  ${BOLD}Статус сервисов:${N}"
+for svc in hipr-mtg nginx hipr-watchdog.timer; do
+  if systemctl is-active --quiet "$svc" 2>/dev/null; then
+    echo -e "  ${G}✓${N}  $svc"
+  else
+    echo -e "  ${R}✗${N}  $svc ${DIM}(не запущен)${N}"
+  fi
+done
+echo ""
+echo -e "  ${BOLD}Порты:${N}"
+ss -tlnp 2>/dev/null | grep -E ':443|:2398|:8443|:80' \
+  | awk '{print "  " $1 " " $4}' || true
+echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+echo ""
