@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Скоро открытие — подпишитесь чтобы узнать первым">
+<title>Скоро открытие</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#0f0f1a;
+  color:#fff;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:100vh;
+  text-align:center;
+  padding:2rem;
+  overflow:hidden;
+}
+.bg{
+  position:fixed;inset:0;z-index:0;
+  background:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,.15) 0%,transparent 60%),
+             radial-gradient(ellipse at 80% 20%,rgba(168,85,247,.12) 0%,transparent 60%),
+             radial-gradient(ellipse at 60% 80%,rgba(59,130,246,.1) 0%,transparent 60%);
+}
+.content{position:relative;z-index:1;max-width:560px;width:100%}
+.logo{
+  display:inline-flex;align-items:center;gap:.6rem;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  padding:.5rem 1.25rem;border-radius:50px;margin-bottom:3rem;
+  font-size:.85rem;font-weight:600;letter-spacing:.5px;color:rgba(255,255,255,.8)
+}
+.logo-dot{width:8px;height:8px;border-radius:50%;background:#6366f1;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+h1{
+  font-size:clamp(2rem,5vw,3.25rem);font-weight:800;
+  line-height:1.15;margin-bottom:1.25rem;
+  background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,.7) 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text
+}
+.sub{color:rgba(255,255,255,.5);font-size:1.05rem;margin-bottom:3rem;line-height:1.6}
+.counter{display:flex;justify-content:center;gap:1.5rem;margin-bottom:3rem;flex-wrap:wrap}
+.count-item{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);
+  border-radius:12px;padding:1.25rem 1.5rem;min-width:80px}
+.count-num{font-size:2rem;font-weight:800;line-height:1;color:#a5b4fc}
+.count-label{font-size:.7rem;color:rgba(255,255,255,.4);margin-top:.3rem;text-transform:uppercase;letter-spacing:.5px}
+.form{display:flex;gap:.75rem;max-width:420px;margin:0 auto 1.5rem;flex-wrap:wrap;justify-content:center}
+.input{
+  flex:1;min-width:200px;padding:.8rem 1.25rem;border-radius:10px;
+  border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);
+  color:#fff;font-size:.9rem;outline:none;font-family:inherit
+}
+.input::placeholder{color:rgba(255,255,255,.35)}
+.input:focus{border-color:rgba(99,102,241,.6);background:rgba(255,255,255,.1)}
+.btn{
+  padding:.8rem 1.75rem;border-radius:10px;border:none;
+  background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
+  font-weight:700;font-size:.9rem;cursor:pointer;white-space:nowrap;font-family:inherit
+}
+.btn:hover{opacity:.9}
+.hint{color:rgba(255,255,255,.3);font-size:.78rem}
+.socials{display:flex;gap:1rem;justify-content:center;margin-top:3rem}
+.soc{
+  width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
+  color:rgba(255,255,255,.5);font-size:.9rem;transition:.2s
+}
+.soc:hover{background:rgba(255,255,255,.12);color:#fff}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="content">
+  <div class="logo">
+    <span class="logo-dot"></span>
+    В разработке
+  </div>
+  <h1>Что-то крутое скоро появится</h1>
+  <p class="sub">Мы работаем над чем-то особенным.<br>Подпишитесь — пришлём письмо в день запуска.</p>
+
+  <div class="counter">
+    <div class="count-item">
+      <div class="count-num" id="days">14</div>
+      <div class="count-label">Дней</div>
+    </div>
+    <div class="count-item">
+      <div class="count-num" id="hours">08</div>
+      <div class="count-label">Часов</div>
+    </div>
+    <div class="count-item">
+      <div class="count-num" id="mins">23</div>
+      <div class="count-label">Минут</div>
+    </div>
+    <div class="count-item">
+      <div class="count-num" id="secs">41</div>
+      <div class="count-label">Секунд</div>
+    </div>
+  </div>
+
+  <div class="form">
+    <input class="input" type="email" placeholder="Ваш email">
+    <button class="btn">Уведомить меня</button>
+  </div>
+  <p class="hint">Никакого спама. Только одно письмо в день запуска.</p>
+
+  <div class="socials">
+    <a href="#" class="soc">TG</a>
+    <a href="#" class="soc">GH</a>
+    <a href="#" class="soc">TW</a>
+  </div>
+</div>
+
+<script>
+  const launch = new Date(Date.now() + 14*24*60*60*1000);
+  function tick(){
+    const d = launch - Date.now();
+    if(d < 0) return;
+    document.getElementById('days').textContent  = String(Math.floor(d/864e5)).padStart(2,'0');
+    document.getElementById('hours').textContent = String(Math.floor(d%864e5/36e5)).padStart(2,'0');
+    document.getElementById('mins').textContent  = String(Math.floor(d%36e5/6e4)).padStart(2,'0');
+    document.getElementById('secs').textContent  = String(Math.floor(d%6e4/1e3)).padStart(2,'0');
+  }
+  tick(); setInterval(tick,1000);
+</script>
+</body></html>

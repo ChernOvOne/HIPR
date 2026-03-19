@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Фриланс разработчик — веб и мобильные приложения">
+<title>Алексей Соколов — Разработчик</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1a1a2e;line-height:1.6;background:#f8f9ff}
+a{color:#4361ee;text-decoration:none}a:hover{text-decoration:underline}
+header{background:#fff;border-bottom:1px solid #e8eaf6;padding:0 2rem;position:sticky;top:0;z-index:10}
+.nav{max-width:960px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:60px}
+.logo{font-weight:800;font-size:1.1rem;letter-spacing:-.5px}
+nav a{margin-left:2rem;color:#555;font-size:.875rem;font-weight:500}
+.hero{background:linear-gradient(135deg,#4361ee 0%,#3a0ca3 100%);color:#fff;padding:5rem 2rem;text-align:center}
+.hero-inner{max-width:680px;margin:0 auto}
+.badge{display:inline-block;background:rgba(255,255,255,.2);padding:4px 14px;border-radius:20px;font-size:.78rem;font-weight:600;letter-spacing:.5px;margin-bottom:1.5rem}
+.hero h1{font-size:2.5rem;font-weight:800;margin-bottom:1rem;line-height:1.2}
+.hero p{font-size:1.1rem;opacity:.9;margin-bottom:2rem}
+.btns{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap}
+.btn{padding:.75rem 2rem;border-radius:8px;font-weight:600;font-size:.9rem;cursor:pointer}
+.btn-white{background:#fff;color:#4361ee}
+.btn-outline{background:transparent;color:#fff;border:2px solid rgba(255,255,255,.6)}
+section{padding:4rem 2rem}
+.sec-inner{max-width:960px;margin:0 auto}
+.sec-title{font-size:1.5rem;font-weight:800;margin-bottom:.5rem}
+.sec-sub{color:#666;margin-bottom:2.5rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:1.5rem}
+.card{background:#fff;border-radius:12px;padding:1.75rem;border:1px solid #e8eaf6;transition:box-shadow .2s}
+.card:hover{box-shadow:0 4px 20px rgba(67,97,238,.1)}
+.card-icon{font-size:2rem;margin-bottom:1rem}
+.card h3{font-size:1rem;font-weight:700;margin-bottom:.5rem}
+.card p{font-size:.875rem;color:#666}
+.stack{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+.tag{background:#f0f3ff;color:#4361ee;padding:3px 10px;border-radius:6px;font-size:.75rem;font-weight:600}
+.projects{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1.5rem}
+.proj{background:#fff;border-radius:12px;border:1px solid #e8eaf6;overflow:hidden}
+.proj-img{height:160px;display:flex;align-items:center;justify-content:center;font-size:3rem}
+.proj-img.blue{background:linear-gradient(135deg,#667eea,#764ba2)}
+.proj-img.green{background:linear-gradient(135deg,#43e97b,#38f9d7)}
+.proj-img.orange{background:linear-gradient(135deg,#f093fb,#f5576c)}
+.proj-body{padding:1.25rem}
+.proj-body h3{font-weight:700;margin-bottom:.4rem}
+.proj-body p{font-size:.85rem;color:#666}
+.contact-bg{background:#1a1a2e;color:#fff;text-align:center}
+.contact-bg .sec-sub{color:rgba(255,255,255,.6)}
+.input{width:100%;padding:.75rem 1rem;border-radius:8px;border:1px solid #e8eaf6;font-size:.9rem;margin-bottom:1rem;font-family:inherit}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;max-width:560px;margin:0 auto}
+@media(max-width:600px){.form-grid{grid-template-columns:1fr}.hero h1{font-size:1.8rem}}
+footer{text-align:center;padding:1.5rem;background:#111;color:#555;font-size:.78rem}
+</style>
+</head>
+<body>
+<header>
+  <div class="nav">
+    <div class="logo">Алексей<span style="color:#4361ee">.</span>dev</div>
+    <nav>
+      <a href="#services">Услуги</a>
+      <a href="#projects">Проекты</a>
+      <a href="#contact">Контакт</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="hero-inner">
+    <div class="badge">✦ Доступен для новых проектов</div>
+    <h1>Разрабатываю веб-сервисы и мобильные приложения</h1>
+    <p>5 лет опыта · 40+ завершённых проектов · React, Node.js, Flutter</p>
+    <div class="btns">
+      <a href="#contact" class="btn btn-white">Обсудить проект</a>
+      <a href="#projects" class="btn btn-outline">Посмотреть работы</a>
+    </div>
+  </div>
+</div>
+
+<section id="services" style="background:#fff">
+  <div class="sec-inner">
+    <div class="sec-title">Чем могу помочь</div>
+    <div class="sec-sub">Полный цикл разработки от идеи до продакшна</div>
+    <div class="cards">
+      <div class="card">
+        <div class="card-icon">🌐</div>
+        <h3>Веб-приложения</h3>
+        <p>SPA, лендинги, административные панели, корпоративные сайты</p>
+        <div class="stack"><span class="tag">React</span><span class="tag">Next.js</span><span class="tag">TypeScript</span></div>
+      </div>
+      <div class="card">
+        <div class="card-icon">📱</div>
+        <h3>Мобильные приложения</h3>
+        <p>Кроссплатформенные приложения под iOS и Android</p>
+        <div class="stack"><span class="tag">Flutter</span><span class="tag">Dart</span><span class="tag">Firebase</span></div>
+      </div>
+      <div class="card">
+        <div class="card-icon">⚙️</div>
+        <h3>Бэкенд и API</h3>
+        <p>REST/GraphQL API, микросервисы, интеграции с внешними сервисами</p>
+        <div class="stack"><span class="tag">Node.js</span><span class="tag">PostgreSQL</span><span class="tag">Docker</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="projects">
+  <div class="sec-inner">
+    <div class="sec-title">Последние проекты</div>
+    <div class="sec-sub">Некоторые из недавних работ</div>
+    <div class="projects">
+      <div class="proj">
+        <div class="proj-img blue">📊</div>
+        <div class="proj-body">
+          <h3>Аналитическая платформа</h3>
+          <p>Дашборд для мониторинга бизнес-метрик в реальном времени. React + D3.js + WebSocket</p>
+        </div>
+      </div>
+      <div class="proj">
+        <div class="proj-img green">🛒</div>
+        <div class="proj-body">
+          <h3>Мобильный маркетплейс</h3>
+          <p>Flutter-приложение с каталогом, корзиной и оплатой. 10k+ установок</p>
+        </div>
+      </div>
+      <div class="proj">
+        <div class="proj-img orange">💬</div>
+        <div class="proj-body">
+          <h3>CRM для агентства</h3>
+          <p>Система управления клиентами и сделками. Node.js + PostgreSQL + React</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="contact-bg">
+  <div class="sec-inner">
+    <div class="sec-title">Свяжитесь со мной</div>
+    <div class="sec-sub">Расскажите о вашем проекте — отвечу в течение 24 часов</div>
+    <div style="max-width:560px;margin:0 auto">
+      <div class="form-grid">
+        <input class="input" placeholder="Ваше имя" type="text">
+        <input class="input" placeholder="Email" type="email">
+      </div>
+      <input class="input" placeholder="Тема" type="text" style="display:block;max-width:560px;margin:0 auto 1rem">
+      <textarea class="input" rows="4" placeholder="Расскажите о проекте..." style="display:block;max-width:560px;margin:0 auto 1rem;resize:vertical"></textarea>
+      <div style="text-align:center"><button class="btn btn-white" style="background:#4361ee;color:#fff">Отправить сообщение</button></div>
+    </div>
+  </div>
+</section>
+
+<footer>© 2024 alexei.dev · Все права защищены</footer>
+</body></html>
