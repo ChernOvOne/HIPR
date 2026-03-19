@@ -121,7 +121,7 @@ step "Установка пакетов"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq 2>/dev/null
 apt-get install -y -qq \
-  nginx certbot python3-certbot-nginx \
+  nginx libnginx-mod-stream certbot python3-certbot-nginx \
   curl wget jq bc \
   net-tools netcat-openbsd \
   qrencode xxd openssl python3 \
@@ -314,8 +314,6 @@ server {
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 1d;
     ssl_session_tickets off;
-    ssl_stapling        on;
-    ssl_stapling_verify on;
 
     root  /var/www/hipr;
     index index.html;
@@ -338,43 +336,21 @@ EOF
 
     ln -sf /etc/nginx/sites-available/hipr-ssl /etc/nginx/sites-enabled/
 
-    # nginx stream — слушает порт 443, по первым байтам решает куда слать
-    # Если клиент делает TLS к нашему домену → смотрим на порт назначения
-    # mtg слушает на 127.0.0.1:2398 и сам обрабатывает TLS
-    # Нам нужен HAProxy или stream-модуль для разделения
+    # nginx stream — слушает 443, проксирует TCP в mtg
+    # libnginx-mod-stream уже установлен выше и сам создал load_module конфиг
+    # Убеждаемся что модуль активен
+    if ! dpkg -l libnginx-mod-stream 2>/dev/null | grep -q '^ii'; then
+      info "libnginx-mod-stream не установлен — доустанавливаем..."
+      apt-get install -y -qq libnginx-mod-stream 2>/dev/null
+    fi
 
-    # Проверяем есть ли stream модуль
-    if nginx -V 2>&1 | grep -q 'stream'; then
-      # Активируем stream-модуль если он динамический и ещё не загружен
-      STREAM_MOD=""
-      for _p in \
-          /usr/lib/nginx/modules/ngx_stream_module.so \
-          /usr/share/nginx/modules/ngx_stream_module.so; do
-        [[ -f "$_p" ]] && { STREAM_MOD="$_p"; break; }
-      done
-      if [[ -n "$STREAM_MOD" ]]; then
-        if ! grep -rl 'ngx_stream_module' /etc/nginx/modules-enabled/ 2>/dev/null | grep -q .; then
-          echo "load_module $STREAM_MOD;" > /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
-          ok "Stream модуль активирован: $STREAM_MOD"
-        else
-          ok "Stream модуль уже загружен"
-        fi
-      fi
-      cat > /etc/nginx/snippets/hipr-stream.conf << EOF
-# stream блок для HIPR — роутинг порта 443
-# mtg обрабатывает TLS сам, nginx только проксирует TCP
+    mkdir -p /etc/nginx/snippets
+    cat > /etc/nginx/snippets/hipr-stream.conf << 'STREAMEOF'
 stream {
     upstream hipr_mtg {
         server 127.0.0.1:2398;
     }
 
-    upstream hipr_web {
-        server 127.0.0.1:8443;
-    }
-
-    # Все соединения на 443 → mtg
-    # mtg сам определяет: это Telegram или браузер
-    # Для браузеров mtg отдаёт 404 (или мы настроим fallback)
     server {
         listen 443;
         listen [::]:443;
@@ -383,52 +359,14 @@ stream {
         proxy_connect_timeout 10s;
     }
 }
-EOF
-      # Включаем stream в nginx.conf если не включён
-      if ! grep -q 'include /etc/nginx/snippets/hipr-stream.conf' /etc/nginx/nginx.conf; then
-        echo "include /etc/nginx/snippets/hipr-stream.conf;" >> /etc/nginx/nginx.conf
-      fi
-      ok "nginx stream настроен (порт 443 → mtg)"
-    else
-      info "nginx stream модуль не найден — используем HAProxy"
-      # Устанавливаем HAProxy для разделения трафика
-      apt-get install -y -qq haproxy 2>/dev/null
+STREAMEOF
 
-      cat > /etc/haproxy/haproxy.cfg << EOF
-global
-    log /dev/log local0
-    maxconn 50000
-    user haproxy
-    group haproxy
-    daemon
-
-defaults
-    log global
-    mode tcp
-    timeout connect 10s
-    timeout client  5m
-    timeout server  5m
-    option tcplog
-
-frontend ft_https
-    bind *:443
-    tcp-request inspect-delay 5s
-    tcp-request content accept if { req.ssl_hello_type 1 }
-
-    # mtg обрабатывает всё — он сам знает что делать с TLS
-    default_backend bk_mtg
-
-backend bk_mtg
-    server mtg 127.0.0.1:2398 check
-
-backend bk_web
-    server nginx 127.0.0.1:8443 check
-EOF
-
-      systemctl enable haproxy 2>/dev/null
-      systemctl restart haproxy
-      ok "HAProxy настроен (порт 443 → mtg)"
+    # stream-блок должен быть на верхнем уровне nginx.conf — добавляем include
+    # только если его там ещё нет
+    if ! grep -q 'hipr-stream.conf' /etc/nginx/nginx.conf; then
+      echo "include /etc/nginx/snippets/hipr-stream.conf;" >> /etc/nginx/nginx.conf
     fi
+    ok "nginx stream настроен (порт 443 → mtg)"
 
     if nginx -t 2>/tmp/hipr-nginx-test.log; then
       systemctl reload nginx
