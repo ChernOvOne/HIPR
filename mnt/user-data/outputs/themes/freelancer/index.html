@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Алексей Смирнов — Backend разработчик</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0d1117;--bg2:#161b22;--bd:#30363d;--tx:#c9d1d9;--mt:#8b949e;--ac:#58a6ff;--gr:#3fb950}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--tx);line-height:1.7}
+a{color:var(--ac);text-decoration:none}a:hover{text-decoration:underline}
+nav{position:sticky;top:0;z-index:10;background:rgba(13,17,23,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--bd);padding:0 2rem;display:flex;align-items:center;justify-content:space-between;height:56px}
+.nl{font-weight:700;color:#f0f6fc;font-size:.95rem}
+.nr{display:flex;gap:1.5rem}.nr a{color:var(--mt);font-size:.875rem;font-weight:500}.nr a:hover{color:var(--tx);text-decoration:none}
+.hero{min-height:90vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:4rem 2rem;background:radial-gradient(ellipse at top,#1a2332 0%,var(--bg) 65%)}
+.badge{display:inline-flex;align-items:center;gap:.5rem;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.3);color:var(--gr);padding:.35rem 1rem;border-radius:20px;font-size:.8rem;font-weight:600;margin-bottom:1.5rem}
+.dot{width:7px;height:7px;background:var(--gr);border-radius:50%;animation:bl 2s infinite}
+@keyframes bl{0%,100%{opacity:1}50%{opacity:.3}}
+.hero h1{font-size:clamp(2rem,5vw,3.2rem);font-weight:700;color:#f0f6fc;letter-spacing:-1px;margin-bottom:.75rem;line-height:1.2}
+.hero h1 span{color:var(--ac)}
+.hero .sub{font-size:1.1rem;color:var(--mt);margin-bottom:2.5rem;max-width:480px;margin-left:auto;margin-right:auto}
+.btns{display:flex;gap:.75rem;justify-content:center;flex-wrap:wrap}
+.btn{padding:.6rem 1.5rem;border-radius:6px;font-size:.875rem;font-weight:600;transition:opacity .15s;text-decoration:none}
+.bp{background:var(--ac);color:#0d1117}.bp:hover{opacity:.85;text-decoration:none}
+.bo{background:transparent;border:1px solid var(--bd);color:var(--tx)}.bo:hover{border-color:var(--mt);text-decoration:none}
+section{padding:5rem 2rem}.si{max-width:900px;margin:0 auto}
+section h2{font-size:1.5rem;font-weight:700;color:#f0f6fc;margin-bottom:2.5rem;letter-spacing:-.5px}
+section h2 span{color:var(--ac)}
+.sk-bg{background:var(--bg2);border-top:1px solid var(--bd);border-bottom:1px solid var(--bd)}
+.sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem}
+.sc{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:1.25rem}
+.sc h3{font-size:.875rem;font-weight:600;color:#f0f6fc;margin-bottom:.75rem}
+.st{display:flex;flex-wrap:wrap;gap:.4rem}
+.stg{background:rgba(88,166,255,.08);color:var(--ac);border:1px solid rgba(88,166,255,.2);font-size:.75rem;padding:2px 8px;border-radius:4px}
+.pg{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
+.pc{background:var(--bg2);border:1px solid var(--bd);border-radius:8px;padding:1.5rem;transition:border-color .15s}
+.pc:hover{border-color:#58a6ff55}
+.pc h3{font-size:1rem;font-weight:600;color:#f0f6fc;margin-bottom:.5rem}
+.pc p{font-size:.85rem;color:var(--mt);line-height:1.6;margin-bottom:1rem}
+.pl{font-size:.75rem;color:var(--gr);font-weight:600}.pl::before{content:'⬤ ';font-size:.6rem}
+.cb{background:var(--bg2);border-top:1px solid var(--bd)}
+.cc{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:2rem;max-width:480px}
+.cc p{color:var(--mt);font-size:.9rem;margin-bottom:1.5rem}
+.ci{display:flex;align-items:center;gap:.75rem;padding:.6rem 0;border-bottom:1px solid var(--bd);font-size:.875rem}
+.ci:last-child{border:none}
+footer{text-align:center;padding:2rem;color:var(--mt);font-size:.78rem;border-top:1px solid var(--bd)}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nl">aleksei.dev</div>
+  <div class="nr"><a href="#skills">Навыки</a><a href="#projects">Проекты</a><a href="#contact">Контакт</a></div>
+</nav>
+<section class="hero">
+  <div>
+    <div class="badge"><span class="dot"></span>Открыт к проектам</div>
+    <h1>Алексей <span>Смирнов</span></h1>
+    <p class="sub">Backend-разработчик. Строю надёжные сервисы на Go и Python, разбираюсь в сетях и Linux-инфраструктуре.</p>
+    <div class="btns">
+      <a href="#contact" class="btn bp">Написать</a>
+      <a href="#projects" class="btn bo">Посмотреть работы</a>
+    </div>
+  </div>
+</section>
+<section class="sk-bg" id="skills"><div class="si">
+  <h2>Стек <span>&amp;</span> навыки</h2>
+  <div class="sg">
+    <div class="sc"><h3>Языки</h3><div class="st"><span class="stg">Go</span><span class="stg">Python</span><span class="stg">Bash</span><span class="stg">SQL</span></div></div>
+    <div class="sc"><h3>Инфраструктура</h3><div class="st"><span class="stg">Linux</span><span class="stg">Docker</span><span class="stg">nginx</span><span class="stg">systemd</span></div></div>
+    <div class="sc"><h3>Базы данных</h3><div class="st"><span class="stg">PostgreSQL</span><span class="stg">Redis</span><span class="stg">SQLite</span></div></div>
+    <div class="sc"><h3>Сети</h3><div class="st"><span class="stg">TCP/IP</span><span class="stg">TLS</span><span class="stg">HTTP/2</span><span class="stg">DNS</span></div></div>
+  </div>
+</div></section>
+<section id="projects"><div class="si">
+  <h2>Избранные <span>проекты</span></h2>
+  <div class="pg">
+    <div class="pc"><h3>API Gateway</h3><p>Высоконагруженный шлюз с rate limiting и circuit breaker. 50k+ RPS, p99 latency &lt;5ms.</p><div class="pl">Go</div></div>
+    <div class="pc"><h3>Data Pipeline</h3><p>ETL система обработки событий реального времени. Kafka → PostgreSQL, 2M событий/день.</p><div class="pl">Python</div></div>
+    <div class="pc"><h3>Deploy Toolkit</h3><p>Набор утилит для zero-downtime деплоя на bare metal. Rollback за 30 секунд.</p><div class="pl">Go</div></div>
+    <div class="pc"><h3>nginx-config-gen</h3><p>Генератор конфигураций nginx из YAML-шаблонов с валидацией и автоматическим reload.</p><div class="pl">Go</div></div>
+  </div>
+</div></section>
+<section class="cb" id="contact"><div class="si">
+  <h2>Связаться</h2>
+  <div class="cc">
+    <p>Открыт к интересным проектам. Пишите — отвечу в течение суток.</p>
+    <div class="ci">Email: <a href="mailto:alex@aleksei.dev">alex@aleksei.dev</a></div>
+    <div class="ci">Telegram: <a href="#">@aleksei_dev</a></div>
+    <div class="ci">GitHub: <a href="#">github.com/aleksei-dev</a></div>
+  </div>
+</div></section>
+<footer>© 2024 Алексей Смирнов</footer>
+</body></html>
