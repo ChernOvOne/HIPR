@@ -16,9 +16,16 @@ LOG_WD="$HIDE_DIR/logs/watchdog.log"
 LOG_NGX="$HIDE_DIR/logs/nginx-access.log"
 VERSION="4.0"
 
-R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
-B='\033[0;34m'; C='\033[0;36m'; W='\033[1;37m'
-N='\033[0m';    BOLD='\033[1m'; DIM='\033[2m'
+# ── Цвета — $'...' синтаксис, работает везде включая read -rp ─────────────
+R=$'\033[0;31m'
+G=$'\033[0;32m'
+Y=$'\033[1;33m'
+B=$'\033[0;34m'
+C=$'\033[0;36m'
+W=$'\033[1;37m'
+N=$'\033[0m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
 
 # ── Утилиты ────────────────────────────────────────────────────────────────
 load_cfg() { [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" || true; }
@@ -45,9 +52,9 @@ active_theme() {
 # ── Загрузка массивов из config.env ───────────────────────────────────────
 load_arrays() {
   load_cfg
-  IFS='|' read -ra SNI_DOMAINS_ARR   <<< "${SNI_DOMAINS:-microsoft.com}"
-  IFS='|' read -ra MTG_SECRETS_ARR   <<< "${MTG_SECRETS:-}"
-  IFS='|' read -ra MTG_PORTS_ARR     <<< "${MTG_PORTS:-2398}"
+  IFS='|' read -ra SNI_DOMAINS_ARR    <<< "${SNI_DOMAINS:-microsoft.com}"
+  IFS='|' read -ra MTG_SECRETS_ARR    <<< "${MTG_SECRETS:-}"
+  IFS='|' read -ra MTG_PORTS_ARR      <<< "${MTG_PORTS:-2398}"
   IFS='|' read -ra MTG_PROM_PORTS_ARR <<< "${MTG_PROM_PORTS:-3129}"
 }
 
@@ -135,8 +142,10 @@ draw_header() {
   kv  "🎨 Тема:"   "$(active_theme)"
   kv  "⚙️  Режим:"  "${MODE:-single}"
   sep
-  printf "${B}  ║${N}  🟢 ${DIM}Акт${N} ${Y}%-4s${N}  📡 ${DIM}TG${N} ${Y}%-4s${N}  📦 ${DIM}Трафик${N} ${Y}%-10s${N}  🛡️  ${DIM}Атак${N} ${Y}%-4s${N}${B}║${N}\n" \
-    "$STAT_ACTIVE" "$STAT_TG" "$STAT_BYTES_FMT" "$STAT_REPLAYS"
+  # Telegram открывает 3-8 TCP-соединений на клиента — делим для оценки реальных юзеров
+  local ESTIMATED_USERS=$(( STAT_ACTIVE > 0 ? (STAT_ACTIVE + 3) / 4 : 0 ))
+  printf "${B}  ║${N}  🟢 ${DIM}~юзер${N} ${Y}%-4s${N}  📡 ${DIM}conn${N} ${Y}%-4s${N}  📦 ${DIM}Трафик${N} ${Y}%-10s${N}  🛡️  ${DIM}Атак${N} ${Y}%-4s${N}${B}║${N}\n" \
+    "$ESTIMATED_USERS" "$STAT_ACTIVE" "$STAT_BYTES_FMT" "$STAT_REPLAYS"
   row ""; bot_b; echo ""
 }
 
@@ -301,7 +310,6 @@ menu_links() {
 
   bot_b; echo ""
 
-  # QR для первой ссылки
   if command -v qrencode &>/dev/null; then
     local first_secret="${MTG_SECRETS_ARR[0]}"
     local ht="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${first_secret}"
@@ -557,7 +565,6 @@ themes_delete() {
   fi
 }
 
-
 # ══════════════════════════════════════════════════════════════════════════
 # 4. СЕРВИСЫ
 # ══════════════════════════════════════════════════════════════════════════
@@ -674,9 +681,7 @@ menu_logs() {
       4) clear; tail -50 "$LOG_NGX" 2>/dev/null || echo "  Пусто"; pause ;;
       5) clear; tail -50 "$HIDE_DIR/logs/probing.log" 2>/dev/null || echo "  Пусто"; pause ;;
       6) load_cfg
-         local log0="$HIDE_DIR/logs/mtg0.log"
-         [[ "${MODE:-single}" == "single" ]] && log0="$HIDE_DIR/logs/mtg0.log"
-         tail -f "$log0" 2>/dev/null ;;
+         tail -f "$HIDE_DIR/logs/mtg0.log" 2>/dev/null ;;
       7) bash "$HIDE_DIR/bin/daily-report.sh" 2>/dev/null \
            && echo -e "\n  ${G}✅ Отчёт отправлен${N}" \
            || echo -e "\n  ${R}❌ Ошибка — проверьте настройки бота${N}"
@@ -716,11 +721,14 @@ elif b > 1024: print(f'{b/1024:.1f} KB')
 else: print(f'{b} B')
 " 2>/dev/null || echo "${total_bytes}B")
 
-  printf "  🟢  %-32s ${Y}%s${N}\n"  "Активных соединений:"   "$total_active"
-  printf "  📡  %-32s ${Y}%s${N}\n"  "→ Telegram:"            "$total_tg"
-  printf "  📦  %-32s ${G}%s${N}\n"  "Трафик всего:"          "$fmt_b"
-  printf "  🎭  %-32s ${C}%s${N}\n"  "FakeTLS handshakes:"    "$total_fronting"
-  printf "  🛡️   %-32s ${R}%s${N}\n" "Replay/probing атак:"   "$total_replays"
+  printf "  🟢  %-32s ${Y}%s${N}\n"  "TCP-соединений всего:"   "$total_active"
+  local estimated=$(( total_active > 0 ? (total_active + 3) / 4 : 0 ))
+  printf "  👤  %-32s ${G}~%s${N}\n" "Оценка реальных юзеров:" "$estimated"
+  printf "      ${DIM}%-32s${N}\n"   "(Telegram держит 3–8 TCP conn/юзер)"
+  printf "  📡  %-32s ${Y}%s${N}\n"  "→ Telegram соединений:"  "$total_tg"
+  printf "  📦  %-32s ${G}%s${N}\n"  "Трафик всего:"           "$fmt_b"
+  printf "  🎭  %-32s ${C}%s${N}\n"  "FakeTLS handshakes:"     "$total_fronting"
+  printf "  🛡️   %-32s ${R}%s${N}\n" "Replay/probing атак:"    "$total_replays"
   echo ""; pause
 }
 
@@ -754,8 +762,9 @@ elif b>1024: print(f'{b/1024:.1f}KB')
 else: print(f'{b}B')
 " 2>/dev/null || echo "—")
 
-    printf "  ${DIM}  Акт: ${Y}%-4s${N}  ${DIM}TG: ${Y}%-4s${N}  ${DIM}Трафик: ${G}%-8s${N}  ${DIM}FakeTLS: ${C}%-6s${N}  ${DIM}Атак: ${R}%s${N}\n" \
-      "${active:-0}" "${tg:-0}" "$fmt_b" "${fronting:-0}" "${replays:-0}"
+    local est_users=$(( ${active:-0} > 0 ? (${active:-0} + 3) / 4 : 0 ))
+    printf "  ${DIM}  ~юзер: ${G}%-3s${N}  ${DIM}conn: ${Y}%-4s${N}  ${DIM}TG: ${Y}%-4s${N}  ${DIM}Трафик: ${G}%-8s${N}  ${DIM}FakeTLS: ${C}%-6s${N}  ${DIM}Атак: ${R}%s${N}\n" \
+      "$est_users" "${active:-0}" "${tg:-0}" "$fmt_b" "${fronting:-0}" "${replays:-0}"
     echo ""
   done
   pause
@@ -812,7 +821,8 @@ menu_settings() {
   done
 }
 
-# ── Смена SNI для обычного режима ─────────────────────────────────────────
+info_msg() { echo -e "  ${Y}→${N}  $*"; }
+
 _change_sni_single() {
   load_cfg; load_arrays; clear
   echo -e "\n  ${BOLD}🔑 Смена SNI домена${N}\n"
@@ -849,13 +859,11 @@ _change_sni_single() {
     new_secret="ee${rh}${dh}"
   fi
 
-  # Обновляем конфиги
   sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni\"|" "$CONFIG_FILE"
   sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_secret\"|" "$CONFIG_FILE"
   sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"$new_secret\"|" "$CONFIG_FILE"
   sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg0.toml"
 
-  # Обновляем doppelganger URL
   python3 - "$HIDE_DIR/config/mtg0.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
 import sys, re
 path, sni = sys.argv[1], sys.argv[2]
@@ -868,7 +876,6 @@ content = re.sub(
 open(path, 'w').write(content)
 PYEOF
 
-  # Обновляем nginx stream карту
   cat > /etc/nginx/snippets/hipr-stream.conf << EOF
 stream {
     map \$ssl_preread_server_name \$hipr_backend {
@@ -898,7 +905,6 @@ EOF
   echo -e "  ${C}${new_link}${N}"
   echo ""
 
-  # Предлагаем отправить в бот
   if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
     read -rp "  Отправить новую ссылку в бот? [Y/n]: " send_bot
     if [[ "${send_bot,,}" != "n" ]]; then
@@ -913,9 +919,6 @@ EOF
   pause
 }
 
-info_msg() { echo -e "  ${Y}→${N}  $*"; }
-
-# ── Управление Multi-fronting ──────────────────────────────────────────────
 _manage_multi_fronting() {
   load_arrays
   while true; do
@@ -951,7 +954,7 @@ _manage_multi_fronting() {
       0|q) return ;;
       *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
     esac
-    load_arrays  # перезагружаем после изменений
+    load_arrays
   done
 }
 
@@ -1014,19 +1017,15 @@ _apply_sni_change() {
     new_secret="ee${rh}${dh}"
   fi
 
-  # Обновляем массивы
   SNI_DOMAINS_ARR[$idx]="$new_sni"
   MTG_SECRETS_ARR[$idx]="$new_secret"
 
-  # Сохраняем в config.env
   local new_sni_str; new_sni_str=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
   local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
   sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
   sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
-  # Compat
   sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
 
-  # Обновляем toml
   sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg${idx}.toml"
   python3 - "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
 import sys, re
@@ -1040,10 +1039,8 @@ content = re.sub(
 open(path, 'w').write(content)
 PYEOF
 
-  # Пересобираем nginx stream карту
   _rebuild_nginx_stream
 
-  # Перезапускаем инстанс
   local svc; svc=$(mtg_svc $idx)
   systemctl restart "$svc" 2>/dev/null
   sleep 2
@@ -1055,7 +1052,6 @@ PYEOF
   echo -e "  ${C}${new_link}${N}"
   echo ""
 
-  # Отправить в бот
   if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
     read -rp "  Отправить новую ссылку в бот? [Y/n]: " sb
     if [[ "${sb,,}" != "n" ]]; then
@@ -1151,7 +1147,6 @@ _mf_add_instance() {
     new_secret="ee${rh}${dh}"
   fi
 
-  # Создаём toml
   cat > "$HIDE_DIR/config/mtg${idx}.toml" << EOF
 secret = "$new_secret"
 bind-to = "127.0.0.1:$new_port"
@@ -1180,7 +1175,6 @@ EOF
   chown mtgproxy:mtgproxy "$HIDE_DIR/logs/mtg${idx}.log" \
     "$HIDE_DIR/logs/mtg${idx}-error.log" 2>/dev/null || true
 
-  # Обновляем config.env
   SNI_DOMAINS_ARR+=("$new_sni")
   MTG_SECRETS_ARR+=("$new_secret")
   MTG_PORTS_ARR+=("$new_port")
@@ -1195,7 +1189,6 @@ EOF
   sed -i "s|MTG_PORTS=.*|MTG_PORTS=\"$new_port_str\"|" "$CONFIG_FILE"
   sed -i "s|MTG_PROM_PORTS=.*|MTG_PROM_PORTS=\"$new_prom_str\"|" "$CONFIG_FILE"
 
-  # Запускаем systemd
   systemctl daemon-reload
   systemctl enable "hipr-mtg@${idx}" 2>/dev/null
   systemctl start "hipr-mtg@${idx}"
@@ -1230,12 +1223,10 @@ _mf_remove_instance() {
   read -rp "  Удалить инстанс ${SNI_DOMAINS_ARR[$idx]}? [y/N]: " c
   [[ "${c,,}" != "y" ]] && return
 
-  # Останавливаем сервис
   local svc; svc=$(mtg_svc $idx)
   systemctl stop "$svc" 2>/dev/null
   systemctl disable "$svc" 2>/dev/null
 
-  # Удаляем из массивов
   unset 'SNI_DOMAINS_ARR[$idx]'
   unset 'MTG_SECRETS_ARR[$idx]'
   unset 'MTG_PORTS_ARR[$idx]'
@@ -1245,7 +1236,6 @@ _mf_remove_instance() {
   MTG_PORTS_ARR=("${MTG_PORTS_ARR[@]}")
   MTG_PROM_PORTS_ARR=("${MTG_PROM_PORTS_ARR[@]}")
 
-  # Сохраняем
   local s1; s1=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
   local s2; s2=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
   local s3; s3=$(IFS='|'; echo "${MTG_PORTS_ARR[*]}")
@@ -1260,7 +1250,6 @@ _mf_remove_instance() {
   echo -e "\n  ${G}✅ Инстанс удалён${N}"; pause
 }
 
-# ── Пересобираем nginx stream карту ───────────────────────────────────────
 _rebuild_nginx_stream() {
   load_arrays
   local map=""
@@ -1336,7 +1325,6 @@ _setup_bot() {
   fi
   sleep 3
 }
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # 7. ОБНОВЛЕНИЕ
@@ -1416,7 +1404,25 @@ menu_update() {
       [[ -x /usr/local/bin/prometheus ]] && \
         printf "  %-22s %s\n" "Prometheus:" "$(prometheus --version 2>&1 | head -1 || echo '—')"
       [[ -f /etc/grafana/grafana.ini ]] && \
-        printf "  %-22s %s\n" "Grafana:" "$(grafana --version 2>/dev/null || echo 'установлена')"
+        printf "  %-22s %s\n" "Grafana:" "$(grafana-server --version 2>/dev/null || echo 'установлена')"
+      # BBR версия
+      local kver; kver=$(uname -r | grep -oP '^\d+\.\d+' | head -1)
+      local kmaj; kmaj=$(echo "$kver" | cut -d. -f1)
+      local kmin; kmin=$(echo "$kver" | cut -d. -f2)
+      local cur_cc; cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '—')
+      local bbr_ver="—"
+      if [[ "$cur_cc" == "bbr" ]]; then
+        if (( kmaj > 6 )) || (( kmaj == 6 && kmin >= 3 )); then
+          bbr_ver="BBRv3 (ядро $kver)"
+        elif (( kmaj > 5 )) || (( kmaj == 5 && kmin >= 18 )); then
+          bbr_ver="BBR ≈v2/v3 (ядро $kver)"
+        else
+          bbr_ver="BBRv1 (ядро $kver)"
+        fi
+      else
+        bbr_ver="$cur_cc (ядро $kver)"
+      fi
+      printf "  %-22s %s\n" "TCP CC:" "$bbr_ver"
       echo ""; pause ;;
     0|q) return ;;
   esac
@@ -1432,10 +1438,22 @@ menu_optimize() {
     printf "${B}  ║${N}  ${BOLD}🚀 %-53s${N}${B}║${N}\n" "Оптимизация сервера"
     sep
 
-    # Текущий статус
-    local bbr_status congestion
+    local bbr_status congestion kshort kmaj kmin
     congestion=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
-    [[ "$congestion" == "bbr" ]] && bbr_status="${G}✅ включён${N}" || bbr_status="${R}❌ выключен${N}"
+    kshort=$(uname -r | grep -oP '^\d+\.\d+' | head -1)
+    kmaj=$(echo "$kshort" | cut -d. -f1)
+    kmin=$(echo "$kshort" | cut -d. -f2)
+    if [[ "$congestion" == "bbr" ]]; then
+      if (( kmaj > 6 )) || (( kmaj == 6 && kmin >= 3 )); then
+        bbr_status="${G}✅ BBRv3 (ядро $kshort)${N}"
+      elif (( kmaj > 5 )) || (( kmaj == 5 && kmin >= 18 )); then
+        bbr_status="${Y}✅ BBR ≈v2/v3 (ядро $kshort)${N}"
+      else
+        bbr_status="${Y}✅ BBRv1 (ядро $kshort) — BBRv3 лучше${N}"
+      fi
+    else
+      bbr_status="${R}❌ выключен ($congestion)${N}"
+    fi
     printf "${B}  ║${N}  ${DIM}%-16s${N} %-39b${B}║${N}\n" "BBR:" "$bbr_status"
 
     local ulimit_val; ulimit_val=$(ulimit -n 2>/dev/null || echo "?")
@@ -1462,17 +1480,59 @@ menu_optimize() {
 
 _enable_bbr() {
   echo ""
-  if sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
-    echo -e "  ${G}✅ BBR уже включён${N}"; pause; return
+  # Определяем версию ядра и что реально доступно
+  local kver; kver=$(uname -r | grep -oP '^\d+\.\d+' | head -1)
+  local kmaj; kmaj=$(echo "$kver" | cut -d. -f1)
+  local kmin; kmin=$(echo "$kver" | cut -d. -f2)
+  local avail; avail=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "")
+  local current; current=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "")
+
+  # Определяем какой BBR фактически будет использован
+  local bbr_label=""
+  if (( kmaj > 6 )) || (( kmaj == 6 && kmin >= 3 )); then
+    bbr_label="BBRv3"
+  elif (( kmaj > 5 )) || (( kmaj == 5 && kmin >= 18 )); then
+    bbr_label="BBR (≈v2/v3 draft, ядро $kver)"
+  else
+    bbr_label="BBRv1 (ядро $kver)"
   fi
-  modprobe tcp_bbr 2>/dev/null || true
-  echo "net.core.default_qdisc = fq" >> /etc/sysctl.d/99-hipr.conf
-  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-hipr.conf
-  sysctl -p /etc/sysctl.d/99-hipr.conf > /dev/null 2>&1
-  local check; check=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-  [[ "$check" == "bbr" ]] \
-    && echo -e "  ${G}✅ BBR включён${N}" \
-    || echo -e "  ${Y}⚠️  BBR недоступен на этом ядре (нужен Linux 4.9+)${N}"
+
+  if [[ "$current" == "bbr" ]]; then
+    echo -e "  ${G}✅ $bbr_label уже активен${N}"
+    echo -e "  ${DIM}Ядро: $kver  |  Алгоритм: bbr${N}"
+    pause; return
+  fi
+
+  if ! echo "$avail" | grep -qw "bbr"; then
+    modprobe tcp_bbr 2>/dev/null || true
+    avail=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "")
+  fi
+
+  if echo "$avail" | grep -qw "bbr"; then
+    # Перезаписываем файл целиком чтобы не дублировать строки
+    {
+      grep -v 'default_qdisc\|tcp_congestion_control' /etc/sysctl.d/99-hipr.conf 2>/dev/null || true
+      echo "net.core.default_qdisc = fq"
+      echo "net.ipv4.tcp_congestion_control = bbr"
+    } > /tmp/sysctl-hipr.tmp && mv /tmp/sysctl-hipr.tmp /etc/sysctl.d/99-hipr.conf
+    sysctl -p /etc/sysctl.d/99-hipr.conf > /dev/null 2>&1
+    local check; check=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+    if [[ "$check" == "bbr" ]]; then
+      echo -e "  ${G}✅ $bbr_label включён${N}"
+      echo -e "  ${DIM}Ядро: $kver${N}"
+      if (( kmaj < 6 )) || (( kmaj == 6 && kmin < 3 )); then
+        echo ""
+        echo -e "  ${DIM}💡 Для BBRv3 нужно ядро 6.3+${N}"
+        echo -e "  ${DIM}   Ubuntu 24.04 HWE: apt install linux-generic-hwe-24.04${N}"
+      fi
+    else
+      echo -e "  ${R}❌ Не удалось активировать${N}"
+    fi
+  else
+    echo -e "  ${Y}⚠️  BBR не скомпилирован в ядро $kver${N}"
+    echo -e "  ${DIM}Нужен Linux 4.9+. Для BBRv3: ядро 6.3+${N}"
+    echo -e "  ${DIM}Ubuntu 24.04 HWE: apt install linux-generic-hwe-24.04${N}"
+  fi
   pause
 }
 
@@ -1501,8 +1561,42 @@ SYSCTL
 
 _show_network_params() {
   clear; echo -e "\n  ${BOLD}📊 Параметры сети${N}\n"
+  local kver; kver=$(uname -r)
+  local kshort; kshort=$(echo "$kver" | grep -oP '^\d+\.\d+' | head -1)
+  local kmaj; kmaj=$(echo "$kshort" | cut -d. -f1)
+  local kmin; kmin=$(echo "$kshort" | cut -d. -f2)
+  local cur_cc; cur_cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '—')
+  local avail_cc; avail_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo '—')
+
+  printf "  ${DIM}%-42s${N} ${Y}%s${N}\n" "Ядро Linux:" "$kver"
+
+  local bbr_info=""
+  if [[ "$cur_cc" == "bbr" ]]; then
+    if (( kmaj > 6 )) || (( kmaj == 6 && kmin >= 3 )); then
+      bbr_info="${G}bbr (BBRv3 — оптимально!)${N}"
+    elif (( kmaj > 5 )) || (( kmaj == 5 && kmin >= 18 )); then
+      bbr_info="${Y}bbr (≈ BBRv2/v3 draft)${N}"
+    else
+      bbr_info="${Y}bbr (BBRv1 — работает, но BBRv3 лучше)${N}"
+    fi
+  else
+    bbr_info="${R}$cur_cc (BBR не активен)${N}"
+  fi
+  printf "  ${DIM}%-42s${N} %b\n" "TCP congestion control:" "$bbr_info"
+  printf "  ${DIM}%-42s${N} ${DIM}%s${N}\n" "Доступные алгоритмы:" "$avail_cc"
+
+  if [[ "$cur_cc" != "bbr" ]] || { (( kmaj < 6 )) || (( kmaj == 6 && kmin < 3 )); }; then
+    echo ""
+    if [[ "$cur_cc" != "bbr" ]]; then
+      echo -e "  ${Y}💡 BBR выключен.${N} Включить: hide → [8] Оптимизация → [1]"
+    elif (( kmaj < 6 )) || (( kmaj == 6 && kmin < 3 )); then
+      echo -e "  ${Y}💡 BBRv3 требует ядро 6.3+${N} (сейчас $kshort)"
+      echo -e "  ${DIM}   Ubuntu 24.04 HWE: apt install linux-generic-hwe-24.04${N}"
+    fi
+  fi
+
+  echo ""
   local params=(
-    "net.ipv4.tcp_congestion_control"
     "net.core.somaxconn"
     "net.core.rmem_max"
     "net.core.wmem_max"
@@ -1582,7 +1676,6 @@ _full_uninstall() {
   echo -e "\n  ${Y}🗑️  Удаляем...${N}\n"
 
   load_cfg; load_arrays
-  # Останавливаем все инстансы
   if [[ "${MODE:-single}" == "multi" ]]; then
     for i in "${!SNI_DOMAINS_ARR[@]}"; do
       systemctl stop "hipr-mtg@${i}" 2>/dev/null || true
@@ -1596,7 +1689,7 @@ _full_uninstall() {
   fi
 
   systemctl stop hipr-watchdog.timer dnsproxy prometheus grafana-server 2>/dev/null || true
-  systemctl disable hipr-watchdog.timer hipr-watchdog dnsproxy 2>/dev/null || true
+  systemctl disable hipr-watchdog.timer hipr-watchdog dnsproxy prometheus grafana-server 2>/dev/null || true
   rm -f /etc/systemd/system/hipr-watchdog.{service,timer}
   rm -f /etc/systemd/system/dnsproxy.service
   rm -f /etc/systemd/system/prometheus.service
@@ -1606,6 +1699,7 @@ _full_uninstall() {
   rm -f /etc/nginx/sites-{enabled,available}/hipr-{http,ssl,fallback,grafana}
   rm -f /etc/nginx/snippets/hipr-stream.conf
   rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
+  rm -f /etc/nginx/conf.d/hipr-logformat.conf
   sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf 2>/dev/null || true
   nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
   echo -e "  ${G}✓${N} nginx"
@@ -1631,7 +1725,7 @@ case "${1:-}" in
   status)
     load_cfg; load_arrays
     for i in "${!SNI_DOMAINS_ARR[@]}"; do
-      local svc; svc=$(mtg_svc $i)
+      svc=$(mtg_svc $i)
       echo -e "$(svc_icon $svc)  mtg@${i} (${SNI_DOMAINS_ARR[$i]})"
     done
     echo -e "$(svc_icon nginx)  nginx"
@@ -1650,8 +1744,7 @@ case "${1:-}" in
     echo "tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRETS_ARR[0]}" ;;
   logs)
     load_cfg
-    local log0="$HIDE_DIR/logs/mtg0.log"
-    tail -f "$log0" 2>/dev/null ;;
+    tail -f "$HIDE_DIR/logs/mtg0.log" 2>/dev/null ;;
   restart)  _mtg_action restart; systemctl reload nginx 2>/dev/null ;;
   stop)     _mtg_action stop ;;
   start)    _mtg_action start ;;
