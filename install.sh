@@ -1150,11 +1150,10 @@ server {
     access_log $HIDE_DIR/logs/nginx-access.log hipr_detailed;
     error_log  $HIDE_DIR/logs/nginx-error.log warn;
 
-    location / { try_files \$uri \$uri/ =404; }
-    location ~* \.(css|js|png|jpg|svg|ico|woff2?)$ {
-        expires 30d;
-        add_header Cache-Control "public, immutable";
+    location / {
+        try_files \$uri \$uri/ =404;
     }
+
     error_page 404 /index.html;
 }
 EOF
@@ -1408,12 +1407,24 @@ EOF
     GRAFANA_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
     GRAFANA_PASS="${GRAFANA_PASS}1!"
 
+    # grafana.ini — domain обязателен для корректного редиректа
+    if [[ "$GRAFANA_MODE" == "path" ]]; then
+      GF_ROOT_URL="https://$DOMAIN/grafana/"
+      GF_SERVE_SUBPATH="true"
+      GF_DOMAIN="$DOMAIN"
+    else
+      GF_ROOT_URL="https://$GRAFANA_DOMAIN/"
+      GF_SERVE_SUBPATH="false"
+      GF_DOMAIN="$GRAFANA_DOMAIN"
+    fi
+
     cat > /etc/grafana/grafana.ini << EOF
 [server]
 http_addr = 127.0.0.1
 http_port = 3000
-root_url = $GRAFANA_URL
-serve_from_sub_path = $( [[ "$GRAFANA_MODE" == "path" ]] && echo "true" || echo "false" )
+domain = $GF_DOMAIN
+root_url = $GF_ROOT_URL
+serve_from_sub_path = $GF_SERVE_SUBPATH
 
 [security]
 admin_user = admin
@@ -1430,25 +1441,23 @@ EOF
     systemctl daemon-reload
     systemctl enable grafana-server 2>/dev/null
     systemctl start grafana-server
-    sleep 3
+    sleep 5
     systemctl is-active --quiet grafana-server \
       && ok "Grafana запущена (127.0.0.1:3000)" \
       || warn "Grafana не запустилась — journalctl -u grafana-server -n 20"
 
-    # nginx для Grafana
+    # ── nginx для Grafana ────────────────────────────────────────────────
     if [[ "$CERT_OK" == "true" ]]; then
       if [[ "$GRAFANA_MODE" == "path" ]]; then
-        cat >> /etc/nginx/sites-available/hipr-ssl << 'GEOF'
+        # Вставляем ^~ location ПЕРЕД location / — важен порядок
+        # ^~ даёт приоритет над regex и не даёт location / перехватить /grafana/*
+        sed -i 's|    location / {|    # Grafana — ^~ приоритет над regex location\n    location ^~ /grafana/ {\n        proxy_pass         http://127.0.0.1:3000;\n        proxy_set_header   Host $host;\n        proxy_set_header   X-Real-IP $remote_addr;\n        proxy_set_header   X-Forwarded-Proto $scheme;\n        proxy_set_header   X-Forwarded-Host $host;\n    }\n\n    location / {|' \
+          /etc/nginx/sites-available/hipr-ssl
+        ok "nginx: location ^~ /grafana/ добавлен"
 
-# Grafana дашборд
-location /grafana/ {
-    proxy_pass http://127.0.0.1:3000/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    rewrite ^/grafana/(.*) /$1 break;
-}
-GEOF
       else
+        # Поддомен — отдельный server блок на порту 8444
+        # root_url без /grafana/ — Grafana работает в корне поддомена
         GRAFANA_CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
         cat > /etc/nginx/sites-available/hipr-grafana << EOF
 server {
@@ -1458,27 +1467,63 @@ server {
     ssl_certificate     $GRAFANA_CERT_PATH/fullchain.pem;
     ssl_certificate_key $GRAFANA_CERT_PATH/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
 
     location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   X-Forwarded-Host \$host;
     }
 }
 EOF
         ln -sf /etc/nginx/sites-available/hipr-grafana /etc/nginx/sites-enabled/
 
+        # Добавляем поддомен в SNI stream роутинг
         sed -i "/$GRAFANA_DOMAIN/d" /etc/nginx/snippets/hipr-stream.conf
         sed -i "s/        default         127.0.0.1:8443;/        $GRAFANA_DOMAIN   127.0.0.1:8444;\n        default         127.0.0.1:8443;/" \
           /etc/nginx/snippets/hipr-stream.conf
+        ok "nginx: поддомен $GRAFANA_DOMAIN настроен"
       fi
 
-      nginx -t 2>/dev/null && systemctl reload nginx
-      ok "nginx настроен для Grafana"
+      nginx -t 2>/dev/null && systemctl reload nginx && ok "nginx перезагружен"
     fi
+
+    # ── Авто-импорт дашборда через Grafana API ───────────────────────────
+    info "Импортируем дашборд HIPR..."
+    sleep 3  # ждём пока Grafana полностью поднимется
+
+    # Строим список targets для Prometheus панелей
+    PROM_TARGETS_JSON=""
+    for port in "${MTG_PROM_PORTS[@]}"; do
+      PROM_TARGETS_JSON="${PROM_TARGETS_JSON}\"127.0.0.1:${port}\","
+    done
+    PROM_TARGETS_JSON="[${PROM_TARGETS_JSON%,}]"
+
+    # Добавляем Prometheus datasource
+    curl -sf --max-time 10 \
+      -X POST http://127.0.0.1:3000/api/datasources \
+      -H "Content-Type: application/json" \
+      -u "admin:${GRAFANA_PASS}" \
+      -d '{"name":"Prometheus","type":"prometheus","url":"http://127.0.0.1:9090","access":"proxy","isDefault":true}' \
+      > /dev/null 2>&1 && ok "Datasource Prometheus добавлен" || info "Datasource — настройте вручную"
+
+    # Импортируем дашборд
+    DASH_JSON=$(cat << 'DASHJSON'
+{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"10s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"title":"TCP соединений","type":"stat","gridPos":{"x":0,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"соединений"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"~Реальных пользователей","type":"stat","gridPos":{"x":6,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"юзеров"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"Соединений к Telegram","type":"stat","gridPos":{"x":12,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":18,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":5,"title":"Соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":24,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"},{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":6,"title":"Трафик","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"rate(sum(mtg_telegram_traffic)[2m])","legendFormat":"байт/сек"}],"fieldConfig":{"defaults":{"unit":"binBps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"rate(mtg_domain_fronting[2m])","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":8,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":0,"y":20,"w":24,"h":6},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}}]},"overwrite":true,"folderId":0}
+DASHJSON
+)
+    curl -sf --max-time 10 \
+      -X POST http://127.0.0.1:3000/api/dashboards/import \
+      -H "Content-Type: application/json" \
+      -u "admin:${GRAFANA_PASS}" \
+      -d "$DASH_JSON" \
+      > /dev/null 2>&1 && ok "Дашборд HIPR импортирован" || info "Дашборд — импортируйте вручную (инструкция в README)"
 
     echo "GRAFANA_PASS=\"$GRAFANA_PASS\"" >> "$CONFIG_FILE"
     ok "Grafana пароль: $GRAFANA_PASS"
+    ok "Grafana URL: $GF_ROOT_URL"
   fi
   done_step
 fi
