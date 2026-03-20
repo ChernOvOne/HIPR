@@ -265,10 +265,14 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq \
   nginx libnginx-mod-stream certbot python3-certbot-nginx \
-  curl wget jq bc python3 \
+  curl wget jq bc python3 python3-pip \
   net-tools netcat-openbsd dnsutils \
   qrencode xxd openssl \
   fail2ban ufw unzip apt-transport-https software-properties-common gnupg 2>/dev/null
+
+# speedtest-cli для тестирования скорости канала
+pip3 install speedtest-cli -q --break-system-packages 2>/dev/null || \
+  pip3 install speedtest-cli -q 2>/dev/null || true
 ok "Пакеты установлены"
 
 # DNS фикс для российских VPS
