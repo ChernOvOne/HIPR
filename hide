@@ -232,16 +232,181 @@ menu_status() {
     kv "💻 CPU load:" "$load"
     kv "💾 RAM:" "$mem"
     row ""; bot_b; echo ""
-    echo -e "  ${C}[r]${N} Обновить  ${C}[t]${N} Проверить DC  ${C}[p]${N} Пинг прокси  ${R}[0]${N} Назад"
+    echo -e "  ${C}[r]${N} Обновить  ${C}[t]${N} Проверить DC  ${C}[p]${N} Пинг прокси  ${C}[s]${N} Тест скорости  ${R}[0]${N} Назад"
     echo ""
     read -rp "  " ch
     case "$ch" in
       r|R) continue ;;
       t|T) _check_all_dc ;;
       p|P) _ping_proxy ;;
+      s|S) _speed_test ;;
       0|q) return ;;
     esac
   done
+}
+
+_speed_test() {
+  load_cfg; load_arrays; clear
+  echo -e "\n  ${BOLD}🚀 Тест скорости и задержки${N}\n"
+  echo -e "  ${DIM}Тест занимает ~20 секунд...${N}\n"
+
+  # ── 1. Latency до всех Telegram DC ──────────────────────────────────────
+  echo -e "  ${BOLD}📡 Latency до Telegram DC:${N}"
+  declare -A DC_NAMES=(
+    ["149.154.175.50"]="DC1 Miami      "
+    ["149.154.167.51"]="DC2 Amsterdam  "
+    ["149.154.175.100"]="DC3 Miami      "
+    ["149.154.167.91"]="DC4 Amsterdam  "
+    ["91.108.56.130"]="DC5 Singapore  "
+  )
+
+  local best_dc="" best_ms=99999
+  for ip in "149.154.175.50" "149.154.167.51" "149.154.175.100" "149.154.167.91" "91.108.56.130"; do
+    local name="${DC_NAMES[$ip]}"
+    local active_mark=""; [[ "$ip" == "${ACTIVE_DC:-}" ]] && active_mark="${Y} ◀ активный${N}"
+    local ping_out; ping_out=$(ping -c 3 -W 2 "$ip" 2>/dev/null)
+    if echo "$ping_out" | grep -q "avg"; then
+      local avg_ms; avg_ms=$(echo "$ping_out" | grep "avg" | awk -F'/' '{print $5}' | cut -d. -f1)
+      local color="$G"
+      (( avg_ms > 100 )) && color="$Y"
+      (( avg_ms > 200 )) && color="$R"
+      printf "  🟢  %s %s${color}%s мс${N}%b\n" "$name" "$ip" "$avg_ms" "$active_mark"
+      if (( avg_ms < best_ms )); then best_ms=$avg_ms; best_dc=$ip; fi
+    else
+      printf "  🔴  %s %s ${R}недоступен${N}%b\n" "$name" "$ip" "$active_mark"
+    fi
+  done
+
+  echo ""
+  if [[ -n "$best_dc" && "$best_dc" != "${ACTIVE_DC:-}" ]]; then
+    echo -e "  ${Y}💡 Самый быстрый DC: ${BOLD}$best_dc${N} ${Y}(${best_ms} мс)${N}"
+    echo -e "  ${DIM}   Текущий: ${ACTIVE_DC:-—}. Сменить: hide → [4] → [6]${N}"
+  elif [[ -n "$best_dc" ]]; then
+    echo -e "  ${G}✅ Активный DC оптимален (${best_ms} мс)${N}"
+  fi
+
+  # ── 2. Latency до ключевых точек ─────────────────────────────────────────
+  echo -e "\n  ${BOLD}⏱️  Latency до ключевых серверов:${N}"
+
+  # Функция замера latency через ping
+  _ping_host() {
+    local label="$1" host="$2"
+    local p; p=$(ping -c 3 -W 2 "$host" 2>/dev/null \
+      | grep avg | awk -F'/' '{print $5}' | cut -d. -f1)
+    if [[ -n "$p" ]]; then
+      local color="$G"
+      (( p > 80  )) && color="$Y"
+      (( p > 150 )) && color="$R"
+      printf "  🟢  %-24s ${color}%s мс${N}\n" "$label" "$p"
+    else
+      printf "  🔴  %-24s ${R}недоступен${N}\n" "$label"
+    fi
+  }
+
+  echo -e "  ${DIM}Международные:${N}"
+  _ping_host "Cloudflare (1.1.1.1)"   "1.1.1.1"
+  _ping_host "Google (8.8.8.8)"       "8.8.8.8"
+
+  echo -e "  ${DIM}Российские:${N}"
+  _ping_host "Яндекс DNS (77.88.8.8)" "77.88.8.8"
+  _ping_host "yandex.ru"              "yandex.ru"
+  _ping_host "vk.com"                 "vk.com"
+  _ping_host "mail.ru"                "mail.ru"
+  _ping_host "SberCloud (CDN)"        "cdn.sbercloud.ru"
+
+  # ── 3. Скорость скачивания с разных источников ───────────────────────────
+  echo -e "\n  ${BOLD}📦 Скорость скачивания:${N}"
+
+  _speed_dl() {
+    local label="$1" url="$2" size_mb="${3:-5}"
+    local bytes=$(( size_mb * 1024 * 1024 ))
+    local raw; raw=$(curl -o /dev/null -w "%{speed_download}" \
+      --max-time 12 --silent "$url" 2>/dev/null || echo "0")
+    local mbit; mbit=$(python3 -c "b=float('${raw:-0}'); print(f'{b*8/1048576:.1f}')" 2>/dev/null || echo "0")
+    local mb; mb=$(python3 -c "b=float('${raw:-0}'); print(f'{b/1048576:.1f}')" 2>/dev/null || echo "0")
+    local color="$G"
+    (( $(echo "$mbit < 50"  | bc -l 2>/dev/null) )) && color="$Y"
+    (( $(echo "$mbit < 5"   | bc -l 2>/dev/null) )) && color="$R"
+    if [[ "$raw" == "0" || -z "$raw" ]]; then
+      printf "  🔴  %-26s ${R}недоступен${N}\n" "$label"
+    else
+      printf "  📊  %-26s ${color}%s Мбит/с${N} ${DIM}(%s MB/s)${N}\n" "$label" "$mbit" "$mb"
+    fi
+  }
+
+  echo -e "  ${DIM}Международные CDN:${N}"
+  _speed_dl "Cloudflare" \
+    "https://speed.cloudflare.com/__down?bytes=10000000" 10
+
+  echo -e "  ${DIM}Российские сервисы:${N}"
+  # Яндекс — публичный файл из CDN
+  _speed_dl "Яндекс CDN" \
+    "https://yastatic.net/s3/lego/_/Kx6F6RQnYFutFnFbxhCOSgBT4tY.svg" 1
+  # VK — статика
+  _speed_dl "VK CDN" \
+    "https://vk.com/images/icons/favicons/fav_logo_2x.png" 1
+  # Mail.ru CDN
+  _speed_dl "Mail.ru CDN" \
+    "https://e.mail.ru/favicon.ico" 1
+
+  # Сохраняем vps_speed_mbit для рекомендаций (берём Cloudflare как основной)
+  local vps_speed_raw; vps_speed_raw=$(curl -o /dev/null -w "%{speed_download}" \
+    --max-time 12 --silent \
+    "https://speed.cloudflare.com/__down?bytes=5000000" 2>/dev/null || echo "0")
+  local vps_speed_mbit; vps_speed_mbit=$(python3 -c \
+    "b=float('${vps_speed_raw:-0}'); print(f'{b*8/1048576:.1f}')" 2>/dev/null || echo "0")
+
+  # ── 4. Скорость через mtg → Telegram ────────────────────────────────────
+  echo -e "\n  ${BOLD}📡 Пропускная способность VPS → Telegram:${N}"
+  echo -e "  ${DIM}Замеряем трафик через метрики за 5 секунд...${N}"
+
+  # Снимаем байты до
+  local bytes_before=0
+  for port in "${MTG_PROM_PORTS_ARR[@]}"; do
+    local b; b=$(curl -sf --max-time 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+      | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
+    bytes_before=$(( bytes_before + ${b:-0} ))
+  done
+
+  sleep 5
+
+  # Снимаем байты после
+  local bytes_after=0
+  for port in "${MTG_PROM_PORTS_ARR[@]}"; do
+    local b; b=$(curl -sf --max-time 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null \
+      | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
+    bytes_after=$(( bytes_after + ${b:-0} ))
+  done
+
+  local delta=$(( bytes_after - bytes_before ))
+  if (( delta > 0 )); then
+    local tg_speed_mb; tg_speed_mb=$(python3 -c "print(f'{${delta}/5/1048576:.2f}')" 2>/dev/null || echo "0")
+    local tg_speed_mbit; tg_speed_mbit=$(python3 -c "print(f'{${delta}/5*8/1048576:.1f}')" 2>/dev/null || echo "0")
+    printf "  📊  %-22s ${G}%s Мбит/с${N} ${DIM}(%s MB/s, реальный трафик)${N}\n" \
+      "Через mtg → TG:" "$tg_speed_mbit" "$tg_speed_mb"
+  else
+    echo -e "  ${DIM}  Нет активных пользователей — трафик через прокси 0${N}"
+    echo -e "  ${DIM}  Подключитесь через прокси и повторите тест${N}"
+  fi
+
+  # ── 5. Итог и рекомендации ───────────────────────────────────────────────
+  echo ""
+  echo -e "  ${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+  echo -e "  ${BOLD}💡 Рекомендации:${N}"
+
+  if (( best_ms > 150 )); then
+    echo -e "  ${Y}⚠️  Высокая latency до DC ($best_ms мс) — пользователи почувствуют задержку${N}"
+    echo -e "  ${DIM}   Попробуйте VPS ближе к Европе (Hetzner DE/FI, Contabo DE)${N}"
+  fi
+  if (( $(echo "${vps_speed_mbit:-0} < 50" | bc -l 2>/dev/null) )); then
+    echo -e "  ${Y}⚠️  Низкая скорость канала VPS (${vps_speed_mbit} Мбит/с)${N}"
+    echo -e "  ${DIM}   Провайдер шейпит трафик или канал перегружен${N}"
+  fi
+  if (( best_ms <= 150 )) && (( $(echo "${vps_speed_mbit:-0} >= 50" | bc -l 2>/dev/null) )); then
+    echo -e "  ${G}✅ Всё в норме — канал и latency хорошие${N}"
+  fi
+  echo ""
+  pause
 }
 
 _check_all_dc() {
