@@ -8,7 +8,7 @@
 
 ```
 Telegram-клиент  →  SNI=microsoft.com    →  nginx:443  →  mtg:2398   →  Telegram DC
-Браузер / ТСПУ   →  SNI=hipr.hideyou.top →  nginx:443  →  nginx:8443 →  сайт-заглушка
+Браузер / ТСПУ   →  SNI=сайт-заглушка →  nginx:443  →  nginx:8443 →  сайт-заглушка
 Всё остальное    →  любой другой SNI     →  nginx:443  →  nginx:8443 →  сайт-заглушка
 ```
 
