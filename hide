@@ -315,90 +315,118 @@ _speed_test() {
 
   # ── 3. Проверка шейпинга ─────────────────────────────────────────────────
   echo -e "\n  ${BOLD}🔎 Проверка шейпинга трафика:${N}"
-  echo -e "  ${DIM}Сравниваем TTL и latency по 443 и 80 портам...${N}\n"
 
   local shaping_detected=false
+  local shaping_reasons=()
 
-  # Метод 1: сравниваем RTT на порт 443 и ICMP ping
-  # Если 443 сильно медленнее ICMP — признак шейпинга HTTPS
-  for target in "yandex.ru" "vk.com"; do
-    local icmp_ms; icmp_ms=$(ping -c 3 -W 2 "$target" 2>/dev/null \
-      | grep avg | awk -F'/' '{print $5}' | cut -d. -f1)
-    local tcp_ms; tcp_ms=$(python3 -c "
-import socket, time, sys
+  # Метод 1: TCP connect time на порт 443 к надёжным точкам
+  # НЕ используем Яндекс — он намеренно медленно отвечает на TCP без QUIC
+  # Используем серверы которые нормально отвечают на TCP:443
+  echo -e "  ${DIM}TCP connect time (ICMP vs TCP:443):${N}"
+
+  _tcp_latency() {
+    local host="$1"
+    python3 -c "
+import socket, time
 try:
     s = socket.socket()
     s.settimeout(3)
     t = time.time()
-    s.connect(('$target', 443))
+    s.connect(('$host', 443))
     s.close()
     print(int((time.time()-t)*1000))
-except:
+except Exception as e:
     print('')
-" 2>/dev/null)
+" 2>/dev/null
+  }
 
-    if [[ -n "$icmp_ms" && -n "$tcp_ms" && "$tcp_ms" =~ ^[0-9]+$ ]]; then
-      local diff=$(( tcp_ms - icmp_ms ))
-      local ratio=0
-      [[ "$icmp_ms" -gt 0 ]] && ratio=$(( tcp_ms * 100 / icmp_ms ))
+  # vk.com и google надёжно отвечают на TCP:443
+  for target in "vk.com" "google.com"; do
+    local icmp_ms; icmp_ms=$(ping -c 3 -W 2 "$target" 2>/dev/null \
+      | grep avg | awk -F'/' '{print $5}' | cut -d. -f1)
+    local tcp_ms; tcp_ms=$(_tcp_latency "$target")
 
-      if (( ratio > 300 )); then
-        # TCP 443 в 3+ раза медленнее ICMP — явный признак шейпинга
-        printf "  ${R}⚠️  %-12s ICMP %d мс  /  TCP:443 %d мс  — возможен шейпинг HTTPS${N}\n" \
+    if [[ -n "$icmp_ms" && -n "$tcp_ms" && "$tcp_ms" =~ ^[0-9]+$ && "$icmp_ms" -gt 0 ]]; then
+      local ratio=$(( tcp_ms * 100 / icmp_ms ))
+      if (( ratio > 500 && tcp_ms > 200 )); then
+        # TCP в 5+ раз медленнее ICMP и >200мс — явный признак
+        printf "  ${R}⚠️   %-12s ICMP %d мс  /  TCP:443 %d мс  → шейпинг${N}\n" \
           "$target" "$icmp_ms" "$tcp_ms"
         shaping_detected=true
+        shaping_reasons+=("HTTPS трафик замедляется провайдером")
       else
-        printf "  ${G}✅  %-12s ICMP %d мс  /  TCP:443 %d мс  — норма${N}\n" \
+        printf "  ${G}✅  %-12s ICMP %d мс  /  TCP:443 %d мс  → норма${N}\n" \
           "$target" "$icmp_ms" "$tcp_ms"
       fi
     else
-      printf "  ${DIM}    %-12s не удалось замерить TCP:443${N}\n" "$target"
+      printf "  ${DIM}    %-12s не удалось замерить${N}\n" "$target"
     fi
   done
 
-  # Метод 2: проверяем доступность Telegram DC на разных портах
-  echo ""
-  echo -e "  ${DIM}Доступность Telegram DC на разных портах:${N}"
+  # Метод 2: доступность Telegram DC на разных портах
+  echo -e "\n  ${DIM}Доступность Telegram DC на портах:${N}"
   local dc="${ACTIVE_DC:-149.154.167.51}"
+  local dc_443_ok=false
   for port in 443 80 5222; do
-    local result
     if timeout 3 bash -c "echo '' > /dev/tcp/$dc/$port" 2>/dev/null; then
-      printf "  ${G}✅  DC %s порт %-6s доступен${N}\n" "$dc" "$port"
+      printf "  ${G}✅  DC %-18s порт %-6s доступен${N}\n" "$dc" "$port"
+      [[ "$port" == "443" ]] && dc_443_ok=true
     else
-      printf "  ${R}🔴  DC %s порт %-6s заблокирован${N}\n" "$dc" "$port"
-      [[ "$port" == "443" ]] && shaping_detected=true
+      printf "  ${R}🔴  DC %-18s порт %-6s заблокирован${N}\n" "$dc" "$port"
+      if [[ "$port" == "443" ]]; then
+        shaping_detected=true
+        shaping_reasons+=("Telegram DC недоступен на порту 443")
+      fi
     fi
   done
 
-  # Метод 3: проверяем MTU (шейпинг часто режет пакеты)
-  echo ""
-  echo -e "  ${DIM}Проверка MTU пути до DC:${N}"
-  local mtu_ok=true
+  # Метод 3: MTU пути до DC
+  echo -e "\n  ${DIM}MTU на пути до Telegram DC:${N}"
+  local mtu_problem=false
   for size in 1400 1200 1000; do
     if ping -c 1 -W 2 -M do -s $size "$dc" > /dev/null 2>&1; then
-      printf "  ${G}✅  MTU %d байт — проходит${N}\n" "$((size + 28))"
+      printf "  ${G}✅  Пакет %d байт — проходит${N}\n" "$((size + 28))"
     else
-      printf "  ${Y}⚠️   MTU %d байт — не проходит (фрагментация)${N}\n" "$((size + 28))"
-      mtu_ok=false
+      printf "  ${Y}⚠️   Пакет %d байт — не проходит${N}\n" "$((size + 28))"
+      mtu_problem=true
     fi
   done
-  [[ "$mtu_ok" == "false" ]] && shaping_detected=true
+  if [[ "$mtu_problem" == "true" ]]; then
+    shaping_detected=true
+    shaping_reasons+=("MTU занижен — ТСПУ режет пакеты")
+  fi
 
   # ── 4. Итог ─────────────────────────────────────────────────────────────
   echo ""
   echo -e "  ${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
   echo -e "  ${BOLD}💡 Вывод:${N}"
+
   if [[ "$shaping_detected" == "true" ]]; then
-    echo -e "  ${R}⚠️  Обнаружены признаки шейпинга или блокировки${N}"
-    echo -e "  ${DIM}   Возможные причины:${N}"
-    echo -e "  ${DIM}   • Провайдер ограничивает HTTPS/443 трафик${N}"
-    echo -e "  ${DIM}   • ТСПУ режет пакеты по MTU${N}"
-    echo -e "  ${DIM}   • Рекомендуется сменить SNI домен: hide → [6] → [1]${N}"
+    echo -e "  ${R}⚠️  Обнаружены признаки шейпинга или блокировки:${N}"
+    for reason in "${shaping_reasons[@]}"; do
+      echo -e "  ${DIM}   • $reason${N}"
+    done
+    echo ""
+    # Конкретные рекомендации зависят от причины
+    if [[ "${shaping_reasons[*]}" == *"MTU"* ]]; then
+      echo -e "  ${Y}→${N}  MTU проблема: прокси с FakeTLS уже помогает"
+      echo -e "  ${DIM}   Дополнительно можно снизить MSS в mtg конфиге${N}"
+    fi
+    if [[ "${shaping_reasons[*]}" == *"443"* ]]; then
+      echo -e "  ${Y}→${N}  Telegram DC заблокирован на 443 — попробуйте сменить DC:"
+      echo -e "  ${DIM}   hide → [4] Управление сервисами → [6] Сменить Telegram DC${N}"
+    fi
+    if [[ "${shaping_reasons[*]}" == *"HTTPS"* ]]; then
+      echo -e "  ${Y}→${N}  Шейпинг HTTPS со стороны VPS провайдера"
+      echo -e "  ${DIM}   Это проблема хостинга, не прокси — рассмотрите смену VPS${N}"
+    fi
   else
     echo -e "  ${G}✅ Шейпинга не обнаружено — прокси работает в нормальных условиях${N}"
   fi
+
   if (( best_ms > 150 )); then
-    echo -e "  ${Y}⚠️  Высокая latency до DC ($best_ms мс) — попробуйте сменить DC${N}"
+    echo -e "\n  ${Y}⚠️  Высокая latency до DC ($best_ms мс)${N}"
+    echo -e "  ${DIM}   Рекомендуется VPS в Европе (Hetzner DE/FI, Contabo DE)${N}"
   fi
   echo ""
   pause
