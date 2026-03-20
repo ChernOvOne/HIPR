@@ -1,22 +1,27 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
-#  HIPR — установщик v3.0
+#  HIPR — установщик v4.0
 #  https://github.com/ChernOvOne/HIPR
 #
-#  Одна команда:
 #  bash <(curl -fsSL https://raw.githubusercontent.com/ChernOvOne/HIPR/main/install.sh)
 # ═══════════════════════════════════════════════════════════════════════════
 set -uo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/ChernOvOne/HIPR/main"
+# ── Версии ────────────────────────────────────────────────────────────────
+VERSION="4.0"
+MTG_VER="2.2.0"
+DNSPROXY_VER="0.81.0"
+
+# ── Пути ──────────────────────────────────────────────────────────────────
 HIDE_DIR="/opt/hipr"
 HIDE_BIN="/usr/local/bin/hide"
 CONFIG_FILE="$HIDE_DIR/config.env"
 WEB_DIR="/var/www/hipr"
 MTG_BIN="$HIDE_DIR/bin/mtg"
-MTG_VER="2.1.7"
-VERSION="3.0"
+DNSPROXY_BIN="/usr/local/bin/dnsproxy"
+REPO_RAW="https://raw.githubusercontent.com/ChernOvOne/HIPR/main"
 
+# ── Цвета ─────────────────────────────────────────────────────────────────
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
 B='\033[0;34m'; C='\033[0;36m'; W='\033[1;37m'
 N='\033[0m';    BOLD='\033[1m'; DIM='\033[2m'
@@ -24,9 +29,9 @@ N='\033[0m';    BOLD='\033[1m'; DIM='\033[2m'
 step()      { echo -e "\n${C}┌─${N} ${BOLD}$*${N}"; }
 ok()        { echo -e "${C}│${N}  ${G}✓${N}  $*"; }
 info()      { echo -e "${C}│${N}  ${Y}→${N}  $*"; }
+warn()      { echo -e "${C}│${N}  ${R}✗${N}  $*"; }
 done_step() { echo -e "${C}└─ ${G}готово${N}"; }
 err()       { echo -e "\n${R}✗  ОШИБКА: $*${N}\n"; exit 1; }
-warn()      { echo -e "${C}│${N}  ${R}✗${N}  $*"; }
 
 # ── Баннер ────────────────────────────────────────────────────────────────
 clear
@@ -37,7 +42,7 @@ cat << 'BANNER'
   ███████║██║██████╔╝██████╔╝
   ██╔══██║██║██╔═══╝ ██╔══██╗
   ██║  ██║██║██║     ██║  ██║
-  ╚═╝  ╚═╝╚═╝╚═╝     ╚═╝  ╚═╝  v3.0
+  ╚═╝  ╚═╝╚═╝╚═╝     ╚═╝  ╚═╝  v4.0
 BANNER
 echo -e "${N}"
 echo -e "  ${DIM}Telegram MTProto прокси — невидимый для ТСПУ${N}"
@@ -47,17 +52,32 @@ echo -e "\n${B}  ━━━━━━━━━━━━━━━━━━━━━
 # ── Проверки ──────────────────────────────────────────────────────────────
 step "Проверка системы"
 
-[[ $EUID -ne 0 ]] && err "Нужен root:  sudo bash install.sh"
+[[ $EUID -ne 0 ]] && err "Нужен root: sudo bash install.sh"
+
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)  MTG_ARCH="amd64"; DNS_ARCH="linux-amd64" ;;
+  aarch64) MTG_ARCH="arm64"; DNS_ARCH="linux-arm64" ;;
+  armv7l)  MTG_ARCH="arm-7"; DNS_ARCH="linux-arm-7" ;;
+  *) err "Неподдерживаемая архитектура: $ARCH" ;;
+esac
+
+ok "OS: $(lsb_release -sd 2>/dev/null || uname -s)"
+ok "Архитектура: $ARCH"
+curl -sf --max-time 5 https://google.com > /dev/null 2>&1 || err "Нет интернета"
+ok "Интернет: есть"
+done_step
 
 # ── Детект повторной установки ────────────────────────────────────────────
-if [[ -f "/opt/hipr/config.env" || -f "/usr/local/bin/hide" ]]; then
+if [[ -f "$CONFIG_FILE" || -f "$HIDE_BIN" ]]; then
   echo -e "${Y}${BOLD}  ⚠️  Обнаружена существующая установка HIPR${N}\n"
-  source /opt/hipr/config.env 2>/dev/null || true
-  [[ -n "${DOMAIN:-}" ]] && echo -e "  ${DIM}Домен: $DOMAIN${N}"
-  [[ -n "${VERSION:-}" ]] && echo -e "  ${DIM}Версия: $VERSION${N}"
+  source "$CONFIG_FILE" 2>/dev/null || true
+  [[ -n "${DOMAIN:-}" ]]  && echo -e "  ${DIM}Домен:   $DOMAIN${N}"
+  [[ -n "${VERSION:-}" ]] && echo -e "  ${DIM}Версия:  $VERSION${N}"
+  [[ -n "${MODE:-}" ]]    && echo -e "  ${DIM}Режим:   $MODE${N}"
   echo ""
-  echo -e "  ${W}[1]${N}  🔄  Переустановить (очистить всё и установить заново)"
-  echo -e "  ${W}[2]${N}  🚪  Отмена"
+  echo -e "  ${C}[1]${N}  🔄  Переустановить (очистить всё и установить заново)"
+  echo -e "  ${C}[2]${N}  🚪  Отмена"
   echo ""
   read -rp "  Выберите: " REINSTALL_CHOICE
 
@@ -66,55 +86,41 @@ if [[ -f "/opt/hipr/config.env" || -f "/usr/local/bin/hide" ]]; then
     exit 0
   fi
 
-  # Предлагаем бэкап
   echo ""
-  read -rp "  💾 Сохранить бэкап конфига и ключей перед удалением? [Y/n]: " DO_BACKUP
+  read -rp "  💾 Сохранить бэкап перед удалением? [Y/n]: " DO_BACKUP
   if [[ "${DO_BACKUP,,}" != "n" ]]; then
     BAK_DIR="/root/hipr_backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$BAK_DIR"
-    [[ -f "/opt/hipr/config.env" ]]              && cp /opt/hipr/config.env "$BAK_DIR/"
-    [[ -f "/opt/hipr/config/mtg.toml" ]]         && cp /opt/hipr/config/mtg.toml "$BAK_DIR/"
-    [[ -d "/opt/hipr/themes/custom" ]]            && cp -r /opt/hipr/themes/custom "$BAK_DIR/" 2>/dev/null || true
+    [[ -f "$CONFIG_FILE" ]]              && cp "$CONFIG_FILE" "$BAK_DIR/"
+    [[ -d "$HIDE_DIR/config" ]]          && cp -r "$HIDE_DIR/config" "$BAK_DIR/"
+    [[ -d "$HIDE_DIR/themes/custom" ]]   && cp -r "$HIDE_DIR/themes/custom" "$BAK_DIR/" 2>/dev/null || true
     cp -r /etc/letsencrypt/live "$BAK_DIR/letsencrypt" 2>/dev/null || true
-    echo -e "  ${G}✅ Бэкап сохранён: ${W}$BAK_DIR${N}"
+    echo -e "  ${G}💾 Бэкап: $BAK_DIR${N}"
   fi
 
-  # Полная очистка
   echo -e "\n  ${Y}🗑️  Удаляем старую установку...${N}"
-  systemctl stop hipr-mtg hipr-watchdog.timer 2>/dev/null || true
-  systemctl disable hipr-mtg hipr-watchdog.timer hipr-watchdog 2>/dev/null || true
+  systemctl stop hipr-mtg hipr-mtg@1 hipr-mtg@2 hipr-mtg@3 hipr-mtg@4 hipr-mtg@5 \
+    hipr-watchdog.timer dnsproxy 2>/dev/null || true
+  systemctl disable hipr-mtg hipr-mtg@{1..5} hipr-watchdog.timer \
+    hipr-watchdog dnsproxy 2>/dev/null || true
   rm -f /etc/systemd/system/hipr-mtg.service
+  rm -f /etc/systemd/system/hipr-mtg@.service
   rm -f /etc/systemd/system/hipr-watchdog.service
   rm -f /etc/systemd/system/hipr-watchdog.timer
+  rm -f /etc/systemd/system/dnsproxy.service
   systemctl daemon-reload
-  rm -f /etc/nginx/sites-enabled/hipr-{http,ssl,fallback}
-  rm -f /etc/nginx/sites-available/hipr-{http,ssl,fallback}
+  rm -f /etc/nginx/sites-enabled/hipr-{http,ssl,fallback,grafana}
+  rm -f /etc/nginx/sites-available/hipr-{http,ssl,fallback,grafana}
   rm -f /etc/nginx/snippets/hipr-stream.conf
   rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
   sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf 2>/dev/null || true
   nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
-  rm -rf /opt/hipr /usr/local/bin/hide /var/www/hipr
-  crontab -l 2>/dev/null | grep -v certbot | crontab - 2>/dev/null || true
-  echo -e "  ${G}✅ Очищено — начинаем установку заново${N}"
-  echo ""
+  rm -rf /opt/hipr /var/www/hipr /usr/local/bin/hide
+  crontab -l 2>/dev/null | grep -v 'hipr\|certbot' | crontab - 2>/dev/null || true
+  killall -9 mtg 2>/dev/null || true
+  echo -e "  ${G}✅ Очищено — начинаем установку заново${N}\n"
   sleep 1
 fi
-
-ARCH=$(uname -m)
-case "$ARCH" in
-  x86_64)  MTG_ARCH="amd64" ;;
-  aarch64) MTG_ARCH="arm64" ;;
-  armv7l)  MTG_ARCH="arm-7" ;;
-  *) err "Неподдерживаемая архитектура: $ARCH" ;;
-esac
-
-ok "OS: $(lsb_release -sd 2>/dev/null || uname -s)"
-ok "Архитектура: $ARCH"
-ss -tlnp 2>/dev/null | grep -q ':443 ' && \
-  info "Порт 443 занят — освободите перед установкой" || ok "Порт 443: свободен"
-curl -sf --max-time 5 https://google.com > /dev/null 2>&1 || err "Нет интернета"
-ok "Интернет: есть"
-done_step
 
 # ── Ввод параметров ───────────────────────────────────────────────────────
 step "Параметры установки"
@@ -133,11 +139,65 @@ while true; do
 done
 
 echo ""
-echo -e "  ${W}Начальная тема сайта-обманки:${N}"
+echo -e "  ${W}Режим работы:${N}"
+echo -e "  ${C}[1]${N}  🔒  Обычный    — 1 прокси, 1 SNI домен"
+echo -e "  ${C}[2]${N}  🔀  Multi-fronting — до 5 прокси, разные SNI домены"
+echo -e "      ${DIM}(рекомендуется для 50+ пользователей)${N}"
+echo ""
+read -rp "  Режим [1-2, Enter=1]: " MODE_CHOICE
+case "${MODE_CHOICE:-1}" in
+  2) MODE="multi" ;;
+  *) MODE="single" ;;
+esac
+
+echo ""
+# ── Выбор SNI доменов ─────────────────────────────────────────────────────
+if [[ "$MODE" == "single" ]]; then
+  echo -e "  ${W}SNI домен для FakeTLS маскировки:${N}"
+  echo -e "  ${DIM}Трафик будет выглядеть как обращение к этому домену${N}"
+  echo -e "  ${C}[1]${N}  microsoft.com   ${DIM}(рекомендуется)${N}"
+  echo -e "  ${C}[2]${N}  avito.ru        ${DIM}(российский, надёжный)${N}"
+  echo -e "  ${C}[3]${N}  ozon.ru         ${DIM}(российский, надёжный)${N}"
+  echo -e "  ${C}[4]${N}  Свой домен"
+  echo ""
+  read -rp "  SNI домен [1-4, Enter=1]: " SNI_CHOICE
+  case "${SNI_CHOICE:-1}" in
+    2) SNI_DOMAINS=("avito.ru") ;;
+    3) SNI_DOMAINS=("ozon.ru") ;;
+    4) read -rp "  Введите домен: " CUSTOM_SNI
+       SNI_DOMAINS=("${CUSTOM_SNI:-microsoft.com}") ;;
+    *) SNI_DOMAINS=("microsoft.com") ;;
+  esac
+else
+  echo -e "  ${W}SNI домены для Multi-fronting:${N}"
+  echo -e "  ${DIM}Каждый домен = отдельный прокси инстанс${N}\n"
+  echo -e "  ${C}[1]${N}  Дефолтный набор ${DIM}(microsoft.com + avito.ru + ozon.ru)${N}"
+  echo -e "  ${C}[2]${N}  Настроить вручную"
+  echo ""
+  read -rp "  Выбор [1-2, Enter=1]: " MF_CHOICE
+
+  if [[ "${MF_CHOICE:-1}" == "2" ]]; then
+    SNI_DOMAINS=()
+    echo -e "  ${DIM}Введите домены по одному (пустая строка — закончить, минимум 2):${N}"
+    while true; do
+      read -rp "  Домен $((${#SNI_DOMAINS[@]}+1)): " d
+      [[ -z "$d" && ${#SNI_DOMAINS[@]} -ge 2 ]] && break
+      [[ -z "$d" ]] && { echo -e "  ${R}Нужно минимум 2 домена${N}"; continue; }
+      SNI_DOMAINS+=("$d")
+      [[ ${#SNI_DOMAINS[@]} -ge 5 ]] && { echo -e "  ${DIM}Максимум 5 доменов${N}"; break; }
+    done
+  else
+    SNI_DOMAINS=("microsoft.com" "avito.ru" "ozon.ru")
+  fi
+fi
+
+echo ""
+# ── Тема сайта-обманки ────────────────────────────────────────────────────
+echo -e "  ${W}Тема сайта-обманки:${N}"
 echo -e "  ${DIM}(меняется через hide → Темы)${N}\n"
-echo -e "  ${W}[1]${N}  Блог разработчика"
-echo -e "  ${W}[2]${N}  Страница фрилансера"
-echo -e "  ${W}[3]${N}  «Скоро открытие»"
+echo -e "  ${C}[1]${N}  Блог разработчика"
+echo -e "  ${C}[2]${N}  Страница фрилансера"
+echo -e "  ${C}[3]${N}  «Скоро открытие»"
 echo ""
 read -rp "  Тема [1-3, Enter=1]: " THEME_CHOICE
 case "${THEME_CHOICE:-1}" in
@@ -146,22 +206,44 @@ case "${THEME_CHOICE:-1}" in
   *) INITIAL_THEME="blog" ;;
 esac
 
+# ── Grafana ───────────────────────────────────────────────────────────────
+echo ""
+echo -e "  ${W}Установить Grafana дашборд?${N} ${DIM}(мониторинг и статистика)${N}"
+echo -e "  ${C}[1]${N}  Да — путь ${DIM}https://$DOMAIN/grafana/${N}"
+echo -e "  ${C}[2]${N}  Да — поддомен ${DIM}(нужна A-запись)${N}"
+echo -e "  ${C}[3]${N}  Нет"
+echo ""
+read -rp "  Grafana [1-3, Enter=3]: " GRAFANA_CHOICE
+case "${GRAFANA_CHOICE:-3}" in
+  1) INSTALL_GRAFANA=true; GRAFANA_MODE="path"; GRAFANA_URL="https://$DOMAIN/grafana" ;;
+  2) INSTALL_GRAFANA=true; GRAFANA_MODE="subdomain"
+     read -rp "  Поддомен (напр. stat.$DOMAIN): " GRAFANA_DOMAIN
+     GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-stat.$DOMAIN}"
+     GRAFANA_URL="https://$GRAFANA_DOMAIN" ;;
+  *) INSTALL_GRAFANA=false; GRAFANA_URL="" ;;
+esac
+
+# ── Telegram бот ──────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${W}Telegram-бот для уведомлений:${N} ${DIM}(необязательно)${N}"
-echo -e "  ${DIM}Создайте бота через @BotFather, получите токен и chat_id${N}"
-read -rp "  Bot Token (или Enter чтобы пропустить): " BOT_TOKEN
+echo -e "  ${DIM}Отчёты, алерты, статистика${N}"
+read -rp "  Bot Token (или Enter пропустить): " BOT_TOKEN
 BOT_TOKEN="${BOT_TOKEN:-}"
 BOT_CHAT_ID=""
 if [[ -n "$BOT_TOKEN" ]]; then
   read -rp "  Chat ID: " BOT_CHAT_ID
 fi
 
+# ── Итог ввода ────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${DIM}─────────────────────────────────────────${N}"
-ok "Домен:  $DOMAIN"
-ok "Email:  $LE_EMAIL"
-ok "Тема:   $INITIAL_THEME"
-[[ -n "$BOT_TOKEN" ]] && ok "Бот:    настроен" || info "Бот:    пропущен"
+ok "Домен:   $DOMAIN"
+ok "Email:   $LE_EMAIL"
+ok "Режим:   $MODE"
+ok "SNI:     ${SNI_DOMAINS[*]}"
+ok "Тема:    $INITIAL_THEME"
+[[ "$INSTALL_GRAFANA" == "true" ]] && ok "Grafana: $GRAFANA_URL" || info "Grafana: нет"
+[[ -n "$BOT_TOKEN" ]] && ok "Бот:     настроен" || info "Бот:     пропущен"
 echo -e "  ${DIM}─────────────────────────────────────────${N}\n"
 
 read -rp "  Начать установку? [Y/n]: " CONFIRM
@@ -171,83 +253,394 @@ done_step
 # ── Пакеты ────────────────────────────────────────────────────────────────
 step "Установка пакетов"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq 2>/dev/null
+apt-get update -qq
 apt-get install -y -qq \
   nginx libnginx-mod-stream certbot python3-certbot-nginx \
-  curl wget jq bc \
-  net-tools netcat-openbsd \
-  qrencode xxd openssl python3 \
+  curl wget jq bc python3 \
+  net-tools netcat-openbsd dnsutils \
+  qrencode xxd openssl \
   fail2ban ufw unzip 2>/dev/null
 ok "Пакеты установлены"
 
-# DNS: гарантируем что резолвер работает.
-# Некоторые VPS-хостеры ставят только свои серверы с attempts:1 — при сбое
-# первого сервера система не переходит ко второму. Перезаписываем resolv.conf
-# с публичными серверами первыми.
-_old_ns=$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | tr '\n' ' ')
-cat > /etc/resolv.conf << EOF
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-$(grep '^nameserver' /etc/resolv.conf 2>/dev/null | grep -v '1\.1\.1\.1\|8\.8\.8\.8' || true)
-options timeout:2
-options rotate
-EOF
-ok "DNS: resolv.conf настроен (1.1.1.1, 8.8.8.8 + хостер)"
-# Проверяем
-if dig microsoft.com +short +time=3 > /dev/null 2>&1; then
-  ok "DNS: microsoft.com резолвится"
-else
-  warn "DNS: microsoft.com не резолвится — mtg не сможет установить FakeTLS"
+# DNS фикс для российских VPS
+if grep -q 'attempts:1' /etc/resolv.conf 2>/dev/null; then
+  info "Обнаружен DNS attempts:1 — добавляем публичный резолвер"
+  if ! grep -q '1\.1\.1\.1' /etc/resolv.conf; then
+    sed -i '/^nameserver/i nameserver 1.1.1.1' /etc/resolv.conf
+    awk '!seen[$0]++' /etc/resolv.conf > /tmp/resolv.tmp && mv /tmp/resolv.tmp /etc/resolv.conf
+  fi
 fi
+ok "DNS настроен"
 done_step
 
-# ── Директории и конфиг ───────────────────────────────────────────────────
+# ── BBR ───────────────────────────────────────────────────────────────────
+step "Оптимизация сети (BBR + sysctl)"
+
+# BBR congestion control
+if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
+  if modprobe tcp_bbr 2>/dev/null; then
+    cat >> /etc/sysctl.d/99-hipr.conf << 'SYSCTL'
+# HIPR — сетевые оптимизации
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+SYSCTL
+    ok "BBR включён"
+  else
+    info "BBR недоступен на этом ядре"
+  fi
+else
+  ok "BBR уже включён"
+fi
+
+# Тюнинг под нагрузку 100+ пользователей
+cat > /etc/sysctl.d/99-hipr.conf << 'SYSCTL'
+# HIPR — сетевые оптимизации для 100+ пользователей
+
+# BBR
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+
+# Буферы
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+
+# Очередь соединений
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+
+# TIME_WAIT
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+
+# Conntrack
+net.netfilter.nf_conntrack_max = 131072
+net.netfilter.nf_conntrack_tcp_timeout_established = 300
+
+# Файловые дескрипторы
+fs.file-max = 1000000
+SYSCTL
+
+sysctl -p /etc/sysctl.d/99-hipr.conf > /dev/null 2>&1 || true
+
+# Лимиты для systemd сервисов
+cat > /etc/security/limits.d/hipr.conf << 'LIMITS'
+* soft nofile 1000000
+* hard nofile 1000000
+* soft nproc  65535
+* hard nproc  65535
+LIMITS
+
+ok "sysctl оптимизирован"
+done_step
+
+# ── Директории ────────────────────────────────────────────────────────────
 step "Создание структуры"
 mkdir -p "$HIDE_DIR"/{bin,logs,config,themes/custom}
 mkdir -p "$WEB_DIR"
-touch "$HIDE_DIR/logs/proxy.log" "$HIDE_DIR/logs/error.log" "$HIDE_DIR/logs/watchdog.log"
-
-# Генерация секрета через mtg (после установки) — пока заглушка
-MTG_SECRET_PLACEHOLDER="__MTG_SECRET__"
-
-cat > "$CONFIG_FILE" << EOF
-# HIPR v$VERSION — $(date -u +"%Y-%m-%d %H:%M UTC")
-DOMAIN="$DOMAIN"
-LE_EMAIL="$LE_EMAIL"
-MTG_SECRET="$MTG_SECRET_PLACEHOLDER"
-ACTIVE_DC="149.154.167.51"
-BOT_TOKEN="$BOT_TOKEN"
-BOT_CHAT_ID="$BOT_CHAT_ID"
-MTG_PORT="2398"
-VERSION="$VERSION"
-INSTALL_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-EOF
-
-ok "Конфиг: $CONFIG_FILE"
+touch "$HIDE_DIR/logs/watchdog.log" \
+      "$HIDE_DIR/logs/nginx-access.log" \
+      "$HIDE_DIR/logs/nginx-error.log"
+ok "Директории созданы"
 done_step
 
-# ── Скачиваем hide с GitHub, темы встроены в скрипт ─────────────────────
-step "Загрузка файлов"
+# ── dnsproxy ──────────────────────────────────────────────────────────────
+step "Установка dnsproxy (локальный DoH)"
+
+DNSPROXY_URL="https://github.com/AdguardTeam/dnsproxy/releases/download/v${DNSPROXY_VER}/dnsproxy-${DNS_ARCH}-v${DNSPROXY_VER}.tar.gz"
+info "Скачиваем dnsproxy v${DNSPROXY_VER}..."
+
+if wget -q "$DNSPROXY_URL" -O /tmp/dnsproxy.tar.gz 2>/dev/null; then
+  mkdir -p /tmp/dnsproxy-extract
+  tar -xzf /tmp/dnsproxy.tar.gz -C /tmp/dnsproxy-extract/
+  find /tmp/dnsproxy-extract -name "dnsproxy" -type f | head -1 | \
+    xargs -I{} cp {} "$DNSPROXY_BIN"
+  chmod +x "$DNSPROXY_BIN"
+  rm -rf /tmp/dnsproxy.tar.gz /tmp/dnsproxy-extract
+  ok "dnsproxy установлен: $($DNSPROXY_BIN --version 2>&1 | head -1)"
+else
+  err "Не удалось скачать dnsproxy"
+fi
+
+cat > /etc/systemd/system/dnsproxy.service << 'EOF'
+[Unit]
+Description=HIPR dnsproxy — локальный DoH сервер
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nobody
+ExecStart=/usr/local/bin/dnsproxy \
+  --listen=127.0.0.1 \
+  --port=5053 \
+  --https-port=5443 \
+  --upstream=https://cloudflare-dns.com/dns-query \
+  --upstream=https://dns.google/dns-query \
+  --fallback=77.88.8.8 \
+  --fallback=1.1.1.1 \
+  --cache \
+  --cache-size=4096
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable dnsproxy 2>/dev/null
+systemctl start dnsproxy
+sleep 2
+
+if systemctl is-active --quiet dnsproxy; then
+  ok "dnsproxy запущен (DoH: 127.0.0.1:5053)"
+  dig microsoft.com @127.0.0.1 -p 5053 +short +time=3 > /dev/null 2>&1 \
+    && ok "DNS резолвинг работает" \
+    || warn "DNS резолвинг не отвечает — проверьте позже"
+else
+  warn "dnsproxy не запустился — проверьте: journalctl -u dnsproxy -n 20"
+fi
+done_step
+
+# ── Скачиваем hide с GitHub ───────────────────────────────────────────────
+step "Загрузка hide"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 if [[ -f "$SCRIPT_DIR/hide" ]]; then
-  info "Локальный репозиторий — копируем hide"
   cp "$SCRIPT_DIR/hide" "$HIDE_BIN"
   ok "hide скопирован локально"
 else
-  info "Скачиваем hide с GitHub..."
   curl -fsSL "$REPO_RAW/hide" -o "$HIDE_BIN" || err "Не удалось скачать hide"
   ok "hide скачан"
 fi
 chmod +x "$HIDE_BIN"
 
-# Темы встроены прямо в установщик — не зависим от GitHub
-info "Разворачиваем темы..."
+# Темы встроены ниже через heredoc
+done_step
 
-mkdir -p "$HIDE_DIR/themes/blog"
-cat > "$HIDE_DIR/themes/blog/theme.json" << 'BLOGTHEMEJSON'
+# ── Установка mtg ─────────────────────────────────────────────────────────
+step "Установка mtg v${MTG_VER}"
+
+MTG_URL="https://github.com/9seconds/mtg/releases/download/v${MTG_VER}/mtg-${MTG_VER}-linux-${MTG_ARCH}.tar.gz"
+info "Скачиваем mtg v${MTG_VER} для $MTG_ARCH..."
+
+if wget -q "$MTG_URL" -O /tmp/mtg.tar.gz 2>/dev/null; then
+  mkdir -p /tmp/mtg-extract
+  tar -xzf /tmp/mtg.tar.gz -C /tmp/mtg-extract/
+  find /tmp/mtg-extract -name "mtg" -type f | head -1 | \
+    xargs -I{} cp {} "$MTG_BIN"
+  rm -rf /tmp/mtg.tar.gz /tmp/mtg-extract
+  chmod +x "$MTG_BIN"
+  ok "mtg установлен: $($MTG_BIN --version 2>/dev/null | head -1)"
+else
+  err "Не удалось скачать mtg"
+fi
+
+# Создаём пользователя mtgproxy
+id mtgproxy &>/dev/null || useradd --system --no-create-home --shell /bin/false mtgproxy
+done_step
+
+# ── Генерация секретов и конфигов ─────────────────────────────────────────
+step "Генерация секретов MTProto"
+
+declare -a MTG_SECRETS=()
+declare -a MTG_PORTS=()
+declare -a MTG_PROM_PORTS=()
+
+BASE_PORT=2398
+BASE_PROM=3129
+
+for i in "${!SNI_DOMAINS[@]}"; do
+  local_sni="${SNI_DOMAINS[$i]}"
+  local_port=$((BASE_PORT + i))
+  local_prom=$((BASE_PROM + i))
+  local_secret=$("$MTG_BIN" generate-secret --hex "$local_sni" 2>/dev/null | tr -d '\n')
+
+  # Fallback генерация
+  if [[ -z "$local_secret" ]]; then
+    local rh; rh=$(openssl rand -hex 16)
+    local dh; dh=$(echo -n "$local_sni" | xxd -p | tr -d '\n')
+    local_secret="ee${rh}${dh}"
+  fi
+
+  MTG_SECRETS+=("$local_secret")
+  MTG_PORTS+=("$local_port")
+  MTG_PROM_PORTS+=("$local_prom")
+
+  ok "SNI: $local_sni → порт $local_port → секрет ${local_secret:0:20}..."
+
+  # Создаём лог файлы
+  touch "$HIDE_DIR/logs/mtg${i}.log" "$HIDE_DIR/logs/mtg${i}-error.log"
+  chown mtgproxy:mtgproxy "$HIDE_DIR/logs/mtg${i}.log" \
+                           "$HIDE_DIR/logs/mtg${i}-error.log"
+
+  # Конфиг mtg
+  mkdir -p "$HIDE_DIR/config"
+  cat > "$HIDE_DIR/config/mtg${i}.toml" << EOF
+# HIPR — mtg инстанс $i (SNI: $local_sni)
+secret = "$local_secret"
+bind-to = "127.0.0.1:$local_port"
+
+[network]
+  dns = "https://cloudflare-dns.com/dns-query"
+
+[defense.anti-replay]
+enabled = true
+max-size = "1mib"
+
+[defense.doppelganger]
+urls = [
+  "https://$local_sni/",
+  "https://$local_sni"
+]
+
+[stats.prometheus]
+enabled = true
+bind-to = "127.0.0.1:$local_prom"
+http-path = "/metrics"
+metric-prefix = "mtg"
+
+[upstream]
+prefer-ip = "prefer-ipv4"
+EOF
+
+done
+
+done_step
+
+# ── Systemd сервисы mtg ───────────────────────────────────────────────────
+step "Systemd сервисы mtg"
+
+if [[ "$MODE" == "single" ]]; then
+  # Один сервис для обычного режима
+  cat > /etc/systemd/system/hipr-mtg.service << EOF
+[Unit]
+Description=HIPR mtg MTProto Proxy (SNI: ${SNI_DOMAINS[0]})
+After=network-online.target dnsproxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mtgproxy
+WorkingDirectory=$HIDE_DIR
+ExecStart=$MTG_BIN run $HIDE_DIR/config/mtg0.toml
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitInterval=60
+StandardOutput=append:$HIDE_DIR/logs/mtg0.log
+StandardError=append:$HIDE_DIR/logs/mtg0-error.log
+LimitNOFILE=1000000
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  ok "Сервис hipr-mtg создан"
+
+else
+  # Шаблонный сервис для Multi-fronting
+  cat > /etc/systemd/system/hipr-mtg@.service << EOF
+[Unit]
+Description=HIPR mtg MTProto Proxy инстанс %i
+After=network-online.target dnsproxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mtgproxy
+WorkingDirectory=$HIDE_DIR
+ExecStart=$MTG_BIN run $HIDE_DIR/config/mtg%i.toml
+ExecReload=/bin/kill -HUP \$MAINPID
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitInterval=60
+StandardOutput=append:$HIDE_DIR/logs/mtg%i.log
+StandardError=append:$HIDE_DIR/logs/mtg%i-error.log
+LimitNOFILE=1000000
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  ok "Шаблон hipr-mtg@ создан"
+fi
+
+systemctl daemon-reload
+
+# Запускаем инстансы
+if [[ "$MODE" == "single" ]]; then
+  systemctl enable hipr-mtg 2>/dev/null
+  systemctl start hipr-mtg
+  sleep 2
+  systemctl is-active --quiet hipr-mtg && ok "hipr-mtg запущен" \
+    || warn "hipr-mtg не запустился — проверьте: journalctl -u hipr-mtg -n 20"
+else
+  for i in "${!SNI_DOMAINS[@]}"; do
+    systemctl enable "hipr-mtg@${i}" 2>/dev/null
+    systemctl start "hipr-mtg@${i}"
+    sleep 1
+    systemctl is-active --quiet "hipr-mtg@${i}" && ok "hipr-mtg@${i} запущен (${SNI_DOMAINS[$i]})" \
+      || warn "hipr-mtg@${i} не запустился"
+  done
+fi
+
+done_step
+
+# ── Сохраняем конфиг ──────────────────────────────────────────────────────
+step "Сохранение конфигурации"
+
+# Сериализуем массивы в строки для config.env
+SNI_DOMAINS_STR=$(IFS='|'; echo "${SNI_DOMAINS[*]}")
+MTG_SECRETS_STR=$(IFS='|'; echo "${MTG_SECRETS[*]}")
+MTG_PORTS_STR=$(IFS='|'; echo "${MTG_PORTS[*]}")
+MTG_PROM_PORTS_STR=$(IFS='|'; echo "${MTG_PROM_PORTS[*]}")
+
+cat > "$CONFIG_FILE" << EOF
+# HIPR v${VERSION} — $(date -u +"%Y-%m-%d %H:%M UTC")
+DOMAIN="$DOMAIN"
+LE_EMAIL="$LE_EMAIL"
+MODE="$MODE"
+ACTIVE_DC="149.154.167.51"
+BOT_TOKEN="$BOT_TOKEN"
+BOT_CHAT_ID="$BOT_CHAT_ID"
+INSTALL_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+VERSION="$VERSION"
+INSTALL_GRAFANA="$INSTALL_GRAFANA"
+GRAFANA_URL="${GRAFANA_URL:-}"
+GRAFANA_MODE="${GRAFANA_MODE:-}"
+
+# SNI домены и секреты (разделитель |)
+SNI_DOMAINS="$SNI_DOMAINS_STR"
+MTG_SECRETS="$MTG_SECRETS_STR"
+MTG_PORTS="$MTG_PORTS_STR"
+MTG_PROM_PORTS="$MTG_PROM_PORTS_STR"
+
+# Compat: первый инстанс как основной
+MTG_SECRET="${MTG_SECRETS[0]}"
+MTG_PORT="${MTG_PORTS[0]}"
+EOF
+
+ok "Конфиг сохранён: $CONFIG_FILE"
+done_step
+
+# ── Темы ──────────────────────────────────────────────────────────────────
+step "Разворачиваем темы"
+
+mkdir -p "$HIDE_DIR/themes"/{blog,freelancer,coming-soon}
+
+
+cat > "$HIDE_DIR/themes/blog/theme.json" << 'TJSON'
 {"name":"blog","description":"Блог разработчика DevNotes","author":"HIPR","version":"1.0","preview":"Технический блог: Linux, Go, DevOps","pages":["index.html","about.html"]}
-BLOGTHEMEJSON
+TJSON
 cat > "$HIDE_DIR/themes/blog/index.html" << 'BLOGEOF'
 <!DOCTYPE html>
 <html lang="ru">
@@ -421,10 +814,9 @@ footer{text-align:center;padding:2rem;color:#aaa;font-size:.78rem;border-top:1px
 BLOGABOUTEOF
 ok "Тема: blog"
 
-mkdir -p "$HIDE_DIR/themes/freelancer"
-cat > "$HIDE_DIR/themes/freelancer/theme.json" << 'FREELANCERTHEMEJSON'
+cat > "$HIDE_DIR/themes/freelancer/theme.json" << 'TJSON'
 {"name":"freelancer","description":"Страница фрилансера","author":"HIPR","version":"1.0","preview":"Портфолио: веб, мобайл, API","pages":["index.html"]}
-FREELANCERTHEMEJSON
+TJSON
 cat > "$HIDE_DIR/themes/freelancer/index.html" << 'FREELANCEREOF'
 <!DOCTYPE html>
 <html lang="ru">
@@ -582,10 +974,9 @@ footer{text-align:center;padding:1.5rem;background:#111;color:#555;font-size:.78
 FREELANCEREOF
 ok "Тема: freelancer"
 
-mkdir -p "$HIDE_DIR/themes/coming-soon"
-cat > "$HIDE_DIR/themes/coming-soon/theme.json" << 'COMINGTHEMEJSON'
-{"name":"coming-soon","description":"Страница «Скоро открытие»","author":"HIPR","version":"1.0","preview":"Таймер обратного отсчёта, подписка на email","pages":["index.html"]}
-COMINGTHEMEJSON
+cat > "$HIDE_DIR/themes/coming-soon/theme.json" << 'TJSON'
+{"name":"coming-soon","description":"Скоро открытие","author":"HIPR","version":"1.0","preview":"Таймер обратного отсчёта","pages":["index.html"]}
+TJSON
 cat > "$HIDE_DIR/themes/coming-soon/index.html" << 'COMINGEOF'
 <!DOCTYPE html>
 <html lang="ru">
@@ -720,73 +1111,12 @@ h1{
 COMINGEOF
 ok "Тема: coming-soon"
 
-# Если локальный репозиторий содержит кастомные темы — добавляем их
-if [[ -d "$SCRIPT_DIR/themes" ]]; then
-  cp -rn "$SCRIPT_DIR/themes"/. "$HIDE_DIR/themes/" 2>/dev/null || true
-  ok "Локальные темы добавлены"
-fi
-
-done_step
-
-# ── Установка mtg ─────────────────────────────────────────────────────────
-step "Установка mtg v$MTG_VER (9seconds/mtg)"
-
-MTG_URL="https://github.com/9seconds/mtg/releases/download/v${MTG_VER}/mtg-${MTG_VER}-linux-${MTG_ARCH}.tar.gz"
-info "Скачиваем mtg для $MTG_ARCH..."
-
-if wget -q "$MTG_URL" -O /tmp/mtg.tar.gz 2>/dev/null; then
-  tar -xzf /tmp/mtg.tar.gz -C /tmp/
-  # mtg распаковывается в папку с именем
-  find /tmp -name "mtg" -type f 2>/dev/null | head -1 | xargs -I{} cp {} "$MTG_BIN"
-  rm -f /tmp/mtg.tar.gz
-  chmod +x "$MTG_BIN"
-  ok "mtg установлен: $($MTG_BIN --version 2>/dev/null | head -1)"
-else
-  # Fallback — скачиваем бинарник напрямую
-  MTG_URL_DIRECT="https://github.com/9seconds/mtg/releases/download/v${MTG_VER}/mtg-linux-${MTG_ARCH}"
-  curl -fsSL "$MTG_URL_DIRECT" -o "$MTG_BIN" 2>/dev/null || err "Не удалось скачать mtg"
-  chmod +x "$MTG_BIN"
-  ok "mtg установлен"
-fi
-
-# Генерируем секрет через mtg
-# ВАЖНО: фронтинг-домен должен быть ВНЕШНИМ сайтом (microsoft.com).
-# Если использовать собственный домен — mtg при каждом соединении будет
-# пытаться подключиться к нему на порт 443, попадёт в nginx stream → себя же → петля.
-info "Генерируем секрет FakeTLS (fronting: microsoft.com)..."
-MTG_SECRET=$("$MTG_BIN" generate-secret --hex "microsoft.com" 2>/dev/null | tr -d '\n')
-
-if [[ -z "$MTG_SECRET" ]]; then
-  # Fallback генерация если команда не сработала
-  RAND_HEX=$(openssl rand -hex 16)
-  DOMAIN_HEX=$(echo -n "$DOMAIN" | xxd -p | tr -d '\n')
-  MTG_SECRET="ee${RAND_HEX}${DOMAIN_HEX}"
-  info "Секрет сгенерирован вручную"
-fi
-
-# Обновляем конфиг с реальным секретом
-sed -i "s|MTG_SECRET=\"$MTG_SECRET_PLACEHOLDER\"|MTG_SECRET=\"$MTG_SECRET\"|" "$CONFIG_FILE"
-ok "Секрет FakeTLS: ${MTG_SECRET:0:20}..."
-done_step
-
-# ── Начальная тема ────────────────────────────────────────────────────────
-step "Разворачиваем тему: $INITIAL_THEME"
-
+# Копируем начальную тему
 THEME_SRC="$HIDE_DIR/themes/$INITIAL_THEME"
-if [[ -f "$THEME_SRC/index.html" ]]; then
-  rm -rf "${WEB_DIR:?}"/*
-  cp -r "$THEME_SRC"/. "$WEB_DIR/"
-  ok "Тема скопирована"
-else
-  cat > "$WEB_DIR/index.html" << 'HTML'
-<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8">
-<title>DevNotes</title></head><body><h1>DevNotes</h1><p>Блог о разработке.</p></body></html>
-HTML
-fi
-
+rm -rf "${WEB_DIR:?}"/*
+cp -r "$THEME_SRC"/. "$WEB_DIR/"
 printf 'User-agent: *\nDisallow: /\n' > "$WEB_DIR/robots.txt"
 chown -R www-data:www-data "$WEB_DIR" 2>/dev/null || true
-mkdir -p "$HIDE_DIR/config"
 echo "$INITIAL_THEME" > "$HIDE_DIR/config/active_theme"
 ok "Активная тема: $INITIAL_THEME"
 done_step
@@ -794,17 +1124,16 @@ done_step
 # ── nginx ─────────────────────────────────────────────────────────────────
 step "Настройка nginx"
 
-# Чистим остатки предыдущих (неудачных) запусков
+# Чистим остатки
 rm -f /etc/nginx/sites-enabled/default
-rm -f /etc/nginx/sites-enabled/hipr-ssl
-rm -f /etc/nginx/sites-available/hipr-ssl
+rm -f /etc/nginx/sites-enabled/hipr-{ssl,fallback}
+rm -f /etc/nginx/sites-available/hipr-{ssl,fallback}
 rm -f /etc/nginx/snippets/hipr-stream.conf
 rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
-# Убираем include hipr-stream из nginx.conf если остался с прошлого раза
 sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf
 mkdir -p /var/www/certbot /etc/nginx/snippets
 
-# HTTP — только для certbot + редирект
+# HTTP конфиг
 cat > /etc/nginx/sites-available/hipr-http << 'EOF'
 server {
     listen 80;
@@ -825,13 +1154,14 @@ server {
 EOF
 
 ln -sf /etc/nginx/sites-available/hipr-http /etc/nginx/sites-enabled/
+
 if nginx -t 2>/tmp/hipr-nginx-http.log; then
   systemctl restart nginx
   ok "nginx запущен (HTTP)"
 else
-  warn "nginx -t упал (HTTP конфиг) — детали:"
+  warn "nginx -t упал:"
   cat /tmp/hipr-nginx-http.log >&2
-  warn "Продолжаем установку, nginx нужно починить вручную после"
+  warn "Продолжаем — исправьте nginx вручную после установки"
 fi
 done_step
 
@@ -842,34 +1172,40 @@ echo ""
 MY_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "?")
 info "Домен:      ${W}$DOMAIN${N}"
 info "IP сервера: ${W}$MY_IP${N}"
-info "A-запись $DOMAIN должна вести на $MY_IP"
+info "A-запись $DOMAIN → $MY_IP должна быть настроена"
 echo ""
 read -rp "  DNS настроен? [Y/n]: " DNS_OK
 
 CERT_OK=false
+CERT_DOMAINS="-d $DOMAIN"
+
+# Для Grafana на поддомене добавляем его в сертификат
+if [[ "${GRAFANA_MODE:-}" == "subdomain" ]]; then
+  info "Домен Grafana:  ${W}$GRAFANA_DOMAIN${N}"
+  info "A-запись $GRAFANA_DOMAIN → $MY_IP тоже нужна"
+  CERT_DOMAINS="-d $DOMAIN -d $GRAFANA_DOMAIN"
+fi
+
 if [[ "${DNS_OK,,}" != "n" ]]; then
   certbot certonly \
-       --webroot -w /var/www/certbot \
-       --non-interactive --agree-tos \
-       --email "$LE_EMAIL" \
-       -d "$DOMAIN" > /tmp/hipr-certbot.log 2>&1 && CERT_OK=true || true
+    --webroot -w /var/www/certbot \
+    --non-interactive --agree-tos \
+    --email "$LE_EMAIL" \
+    $CERT_DOMAINS > /tmp/hipr-certbot.log 2>&1 && CERT_OK=true || true
   tail -5 /tmp/hipr-certbot.log
 
   if [[ "$CERT_OK" == "true" ]]; then
     CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
     ok "Сертификат получен"
 
-    # HTTPS + stream через nginx
-    # nginx stream — роутинг по SNI: mtg или сайт
+    # HTTPS сайт-обманка
     cat > /etc/nginx/sites-available/hipr-ssl << EOF
-# HTTPS сайт-обманка (для active probing ТСПУ и обычных браузеров)
 server {
     listen 127.0.0.1:8443 ssl http2;
     server_name $DOMAIN;
 
     ssl_certificate     $CERT_PATH/fullchain.pem;
     ssl_certificate_key $CERT_PATH/privkey.pem;
-
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
     ssl_prefer_server_ciphers off;
@@ -877,12 +1213,20 @@ server {
     ssl_session_timeout 1d;
     ssl_session_tickets off;
 
-    root  /var/www/hipr;
+    root  $WEB_DIR;
     index index.html;
 
     add_header Server "nginx";
     add_header Strict-Transport-Security "max-age=63072000" always;
     add_header X-Content-Type-Options "nosniff" always;
+
+    # Расширенный лог для анализа probing
+    log_format hipr_detailed '\$remote_addr - \$remote_user [\$time_local] '
+                              '"\$request" \$status \$body_bytes_sent '
+                              '"\$http_referer" "\$http_user_agent" '
+                              '\$request_time \$ssl_protocol';
+    access_log $HIDE_DIR/logs/nginx-access.log hipr_detailed;
+    error_log  $HIDE_DIR/logs/nginx-error.log warn;
 
     location / { try_files \$uri \$uri/ =404; }
     location ~* \.(css|js|png|jpg|svg|ico|woff2?)$ {
@@ -890,153 +1234,230 @@ server {
         add_header Cache-Control "public, immutable";
     }
     error_page 404 /index.html;
-
-    access_log $HIDE_DIR/logs/nginx-access.log;
-    error_log  $HIDE_DIR/logs/nginx-error.log warn;
 }
 EOF
 
     ln -sf /etc/nginx/sites-available/hipr-ssl /etc/nginx/sites-enabled/
 
-    # nginx stream: SNI-роутинг по фронтинг-домену
-    # Telegram-клиент → SNI=microsoft.com → mtg:2398
-    # Браузер/ТСПУ  → SNI=домена → nginx:8443 (сайт-обманка)
-    mkdir -p /etc/nginx/snippets
-    cat > /etc/nginx/snippets/hipr-stream.conf << 'STREAMEOF'
+    # nginx stream — SNI роутинг
+    # Строим карту для всех SNI доменов
+    STREAM_MAP=""
+    for i in "${!SNI_DOMAINS[@]}"; do
+      STREAM_MAP="${STREAM_MAP}        ${SNI_DOMAINS[$i]}   127.0.0.1:${MTG_PORTS[$i]};\n"
+    done
+
+    # Убеждаемся что libnginx-mod-stream установлен
+    dpkg -l libnginx-mod-stream 2>/dev/null | grep -q '^ii' || \
+      apt-get install -y -qq libnginx-mod-stream 2>/dev/null
+
+    cat > /etc/nginx/snippets/hipr-stream.conf << EOF
 stream {
-    map $ssl_preread_server_name $hipr_backend {
-        microsoft.com   127.0.0.1:2398;
-        default         127.0.0.1:8443;
+    map \$ssl_preread_server_name \$hipr_backend {
+$(echo -e "$STREAM_MAP")        default         127.0.0.1:8443;
     }
 
     server {
         listen 443;
         listen [::]:443;
-        proxy_pass      $hipr_backend;
-        ssl_preread     on;
-        proxy_timeout   10m;
+        proxy_pass            \$hipr_backend;
+        ssl_preread           on;
+        proxy_timeout         10m;
         proxy_connect_timeout 10s;
     }
 }
-STREAMEOF
+EOF
 
-    # stream-блок должен быть на верхнем уровне nginx.conf — добавляем include
-    # только если его там ещё нет
     if ! grep -q 'hipr-stream.conf' /etc/nginx/nginx.conf; then
       echo "include /etc/nginx/snippets/hipr-stream.conf;" >> /etc/nginx/nginx.conf
     fi
-    ok "nginx stream настроен (порт 443 → mtg)"
+    ok "nginx stream настроен (SNI роутинг: ${SNI_DOMAINS[*]})"
 
     if nginx -t 2>/tmp/hipr-nginx-test.log; then
       systemctl reload nginx
       ok "nginx перезагружен"
     else
-      warn "nginx -t упал — детали:"
+      warn "nginx -t упал:"
       cat /tmp/hipr-nginx-test.log >&2
-      warn "nginx не перезагружен. После установки: nginx -t && systemctl reload nginx"
     fi
 
-    # Авто-обновление
+    # Авто-обновление сертификата
     (crontab -l 2>/dev/null | grep -v certbot
      echo "0 3 * * * certbot renew --quiet --deploy-hook 'systemctl reload nginx'") | crontab -
     ok "Авто-обновление сертификата (cron 3:00)"
+
   else
-    info "Certbot не смог получить сертификат"
-    info "После DNS: hide → Настройки → Получить сертификат"
+    warn "Certbot не смог получить сертификат"
+    info "После DNS: hide → [6] Настройки → Обновить TLS сертификат"
   fi
 else
-  info "Пропущено. После DNS: hide → Настройки → Получить сертификат"
+  info "Пропущено. После DNS: hide → [6] Настройки → Обновить TLS сертификат"
 fi
 done_step
 
-# ── mtg конфиг и сервис ───────────────────────────────────────────────────
-step "Настройка mtg как systemd сервиса"
+# ── Grafana + Prometheus ───────────────────────────────────────────────────
+if [[ "$INSTALL_GRAFANA" == "true" ]]; then
+  step "Установка Prometheus + Grafana"
 
-source "$CONFIG_FILE"
+  # Prometheus
+  PROM_VER=$(curl -sf --max-time 10 \
+    "https://api.github.com/repos/prometheus/prometheus/releases/latest" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" 2>/dev/null || echo "2.51.0")
 
-# Конфиг для mtg v2
-# mtg использует собственный DNS-резолвер (игнорирует /etc/resolv.conf).
-# Явно задаём DoH-серверы чтобы FakeTLS-рукопожатие с microsoft.com работало.
-cat > "$HIDE_DIR/config/mtg.toml" << EOF
-# HIPR — mtg конфигурация
-# Документация: https://github.com/9seconds/mtg
+  info "Prometheus v$PROM_VER..."
+  wget -q "https://github.com/prometheus/prometheus/releases/download/v${PROM_VER}/prometheus-${PROM_VER}.linux-amd64.tar.gz" \
+    -O /tmp/prometheus.tar.gz 2>/dev/null || warn "Не удалось скачать Prometheus"
 
-secret = "$MTG_SECRET"
+  if [[ -f /tmp/prometheus.tar.gz ]]; then
+    useradd --system --no-create-home --shell /bin/false prometheus 2>/dev/null || true
+    mkdir -p /etc/prometheus /var/lib/prometheus
+    tar -xzf /tmp/prometheus.tar.gz -C /tmp/
+    cp /tmp/prometheus-${PROM_VER}.linux-amd64/{prometheus,promtool} /usr/local/bin/
+    rm -f /tmp/prometheus.tar.gz
 
-bind-to = "127.0.0.1:$MTG_PORT"
+    # Конфиг Prometheus — собираем с всех mtg инстансов
+    PROM_TARGETS=""
+    for port in "${MTG_PROM_PORTS[@]}"; do
+      PROM_TARGETS="${PROM_TARGETS}      - '127.0.0.1:${port}'\n"
+    done
 
-# info — логирует соединения (нужно для статистики)
-log-level = "info"
+    cat > /etc/prometheus/prometheus.yml << EOF
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
-[network]
-  [network.doh]
-    endpoints = [
-      "https://8.8.8.8/dns-query",
-      "https://1.1.1.1/dns-query"
-    ]
-
-  [network.tls]
-    # Предпочитаем TLS 1.3 — меньше отличительных признаков
-    prefer-tls-version = "tls13"
-
-# Telegram DC — меняется через hide → Настройки → Сменить DC
-[upstream]
-prefer-ip = "prefer-ipv4"
+scrape_configs:
+  - job_name: 'hipr_mtg'
+    static_configs:
+      - targets:
+$(echo -e "$PROM_TARGETS")
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
 EOF
 
-# Systemd сервис для mtg
-cat > /etc/systemd/system/hipr-mtg.service << EOF
+    cat > /etc/systemd/system/prometheus.service << 'EOF'
 [Unit]
-Description=HIPR — mtg MTProto Proxy
-Documentation=https://github.com/ChernOvOne/HIPR
+Description=Prometheus
 After=network-online.target
-Wants=network-online.target
 
 [Service]
-Type=simple
-User=nobody
-WorkingDirectory=$HIDE_DIR
-
-ExecStart=$MTG_BIN run $HIDE_DIR/config/mtg.toml
-ExecReload=/bin/kill -HUP \$MAINPID
-
+User=prometheus
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --storage.tsdb.retention.time=30d \
+  --web.listen-address=127.0.0.1:9090
 Restart=always
-RestartSec=5
-StartLimitBurst=5
-StartLimitInterval=60
-
-StandardOutput=append:$HIDE_DIR/logs/mtg.log
-StandardError=append:$HIDE_DIR/logs/mtg-error.log
-
-LimitNOFILE=65536
-NoNewPrivileges=yes
-PrivateTmp=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable hipr-mtg 2>/dev/null
-touch "$HIDE_DIR/logs/mtg.log" "$HIDE_DIR/logs/mtg-error.log"
+    chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus
+    systemctl daemon-reload
+    systemctl enable prometheus 2>/dev/null
+    systemctl start prometheus
+    sleep 2
+    systemctl is-active --quiet prometheus && ok "Prometheus запущен" || warn "Prometheus не запустился"
+  fi
 
-systemctl start hipr-mtg
-sleep 2
-if systemctl is-active --quiet hipr-mtg; then
-  ok "hipr-mtg запущен"
-else
-  warn "hipr-mtg не запустился — проверьте: journalctl -u hipr-mtg -n 20"
-  journalctl -u hipr-mtg -n 10 --no-pager 2>/dev/null || true
+  # Grafana
+  info "Grafana..."
+  apt-get install -y -qq apt-transport-https software-properties-common 2>/dev/null
+  wget -q -O /tmp/grafana.gpg https://apt.grafana.com/gpg.key 2>/dev/null
+  gpg --dearmor < /tmp/grafana.gpg > /etc/apt/keyrings/grafana.gpg 2>/dev/null
+  echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
+    > /etc/apt/sources.list.d/grafana.list
+  apt-get update -qq 2>/dev/null
+  apt-get install -y -qq grafana 2>/dev/null
+
+  # Генерируем пароль
+  GRAFANA_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
+  GRAFANA_PASS="${GRAFANA_PASS}1!"
+
+  # Конфиг Grafana
+  cat > /etc/grafana/grafana.ini << EOF
+[server]
+http_addr = 127.0.0.1
+http_port = 3000
+root_url = $GRAFANA_URL
+serve_from_sub_path = $( [[ "$GRAFANA_MODE" == "path" ]] && echo "true" || echo "false" )
+
+[security]
+admin_user = admin
+admin_password = $GRAFANA_PASS
+
+[auth.anonymous]
+enabled = false
+
+[analytics]
+reporting_enabled = false
+check_for_updates = false
+EOF
+
+  systemctl daemon-reload
+  systemctl enable grafana-server 2>/dev/null
+  systemctl start grafana-server
+  sleep 3
+  systemctl is-active --quiet grafana-server && ok "Grafana запущена" || warn "Grafana не запустилась"
+
+  # nginx для Grafana
+  if [[ "$CERT_OK" == "true" ]]; then
+    if [[ "$GRAFANA_MODE" == "path" ]]; then
+      # Добавляем /grafana/ в существующий SSL конфиг
+      cat >> /etc/nginx/sites-available/hipr-ssl << 'EOF'
+
+# Grafana дашборд
+location /grafana/ {
+    proxy_pass http://127.0.0.1:3000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    rewrite ^/grafana/(.*) /$1 break;
+}
+EOF
+    else
+      # Отдельный vhost для поддомена
+      GRAFANA_CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
+      cat > /etc/nginx/sites-available/hipr-grafana << EOF
+server {
+    listen 127.0.0.1:8444 ssl http2;
+    server_name $GRAFANA_DOMAIN;
+
+    ssl_certificate     $GRAFANA_CERT_PATH/fullchain.pem;
+    ssl_certificate_key $GRAFANA_CERT_PATH/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+}
+EOF
+      ln -sf /etc/nginx/sites-available/hipr-grafana /etc/nginx/sites-enabled/
+
+      # Добавляем поддомен в SNI карту
+      sed -i "/$GRAFANA_DOMAIN/d" /etc/nginx/snippets/hipr-stream.conf
+      sed -i "s/        default         127.0.0.1:8443;/        $GRAFANA_DOMAIN   127.0.0.1:8444;\n        default         127.0.0.1:8443;/" \
+        /etc/nginx/snippets/hipr-stream.conf
+    fi
+
+    nginx -t 2>/dev/null && systemctl reload nginx
+    ok "nginx настроен для Grafana"
+  fi
+
+  # Сохраняем пароль
+  echo "GRAFANA_PASS=\"$GRAFANA_PASS\"" >> "$CONFIG_FILE"
+  ok "Grafana пароль: $GRAFANA_PASS"
+  done_step
 fi
-done_step
 
 # ── Watchdog ──────────────────────────────────────────────────────────────
-step "Установка watchdog (авто-смена DC)"
+step "Watchdog"
 
 cat > "$HIDE_DIR/bin/watchdog.sh" << 'WATCHDOG'
 #!/bin/bash
-# HIPR Watchdog — следит за доступностью Telegram DC
-# Запускается каждые 60 секунд через systemd timer
+# HIPR Watchdog v4.0
 
 CONFIG="/opt/hipr/config.env"
 LOG="/opt/hipr/logs/watchdog.log"
@@ -1050,66 +1471,105 @@ DCS=(
   "91.108.56.130"
 )
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
-
+log()    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 notify() {
   local msg="$1"
-  if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
-    curl -s --max-time 10 \
-      "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-      -d "chat_id=${BOT_CHAT_ID}" \
-      -d "text=🔔 HIPR: ${msg}" \
-      -d "parse_mode=HTML" > /dev/null 2>&1 || true
-  fi
+  [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]] || return
+  curl -s --max-time 10 \
+    "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+    -d "chat_id=${BOT_CHAT_ID}" \
+    -d "text=🔔 HIPR: ${msg}" \
+    -d "parse_mode=HTML" > /dev/null 2>&1 || true
 }
 
 check_dc() {
-  local ip="$1"
-  timeout 5 bash -c "echo '' > /dev/tcp/$ip/443" 2>/dev/null
+  timeout 5 bash -c "echo '' > /dev/tcp/$1/443" 2>/dev/null
 }
 
-# Проверяем текущий DC
+# ── Проверка DC ────────────────────────────────────────────────────────────
 if ! check_dc "${ACTIVE_DC:-149.154.167.51}"; then
-  log "WARN: DC ${ACTIVE_DC} недоступен — ищем замену"
-
+  log "WARN: DC ${ACTIVE_DC} недоступен"
   for dc in "${DCS[@]}"; do
     [[ "$dc" == "${ACTIVE_DC:-}" ]] && continue
     if check_dc "$dc"; then
-      log "INFO: Переключаемся на DC $dc"
-
-      # Обновляем конфиг
+      log "INFO: Переключаемся на $dc"
       sed -i "s/ACTIVE_DC=.*/ACTIVE_DC=\"$dc\"/" "$CONFIG"
-
-      # Обновляем mtg.toml — mtg сам определяет DC по IP Telegram
-      # Перезапускаем сервис
-      systemctl restart hipr-mtg 2>/dev/null || true
-
-      notify "DC переключён: ${ACTIVE_DC} → ${dc}"
-      log "INFO: Успешно переключились на $dc"
+      if [[ "${MODE:-single}" == "multi" ]]; then
+        for i in 0 1 2 3 4; do
+          systemctl is-active --quiet "hipr-mtg@${i}" 2>/dev/null && \
+            systemctl restart "hipr-mtg@${i}" 2>/dev/null || true
+        done
+      else
+        systemctl restart hipr-mtg 2>/dev/null || true
+      fi
+      notify "📡 DC переключён: ${ACTIVE_DC} → ${dc}"
       exit 0
     fi
   done
-
   log "ERROR: Все DC недоступны!"
-  notify "⚠️ Все Telegram DC недоступны! Проверьте сервер."
+  notify "⚠️ Все Telegram DC недоступны!"
 else
   log "OK: DC ${ACTIVE_DC} доступен"
 fi
 
-# Проверяем что mtg жив
-if ! systemctl is-active --quiet hipr-mtg 2>/dev/null; then
-  log "WARN: hipr-mtg не запущен — перезапускаем"
-  systemctl start hipr-mtg 2>/dev/null || true
-  notify "⚠️ mtg был остановлен — перезапущен автоматически"
+# ── Проверка сервисов ─────────────────────────────────────────────────────
+if [[ "${MODE:-single}" == "multi" ]]; then
+  for i in 0 1 2 3 4; do
+    if systemctl is-enabled --quiet "hipr-mtg@${i}" 2>/dev/null; then
+      if ! systemctl is-active --quiet "hipr-mtg@${i}" 2>/dev/null; then
+        log "WARN: hipr-mtg@${i} не запущен — перезапускаем"
+        systemctl start "hipr-mtg@${i}" 2>/dev/null || true
+        notify "⚠️ mtg@${i} перезапущен автоматически"
+      fi
+    fi
+  done
+else
+  if ! systemctl is-active --quiet hipr-mtg 2>/dev/null; then
+    log "WARN: hipr-mtg не запущен — перезапускаем"
+    systemctl start hipr-mtg 2>/dev/null || true
+    notify "⚠️ mtg перезапущен автоматически"
+  fi
+fi
+
+# ── Детект active probing ─────────────────────────────────────────────────
+NGINX_LOG="/opt/hipr/logs/nginx-access.log"
+PROBE_LOG="/opt/hipr/logs/probing.log"
+
+if [[ -f "$NGINX_LOG" ]]; then
+  # Ищем подозрительные паттерны за последние 5 минут
+  RECENT=$(awk -v d="$(date -d '5 minutes ago' '+%d/%b/%Y:%H:%M' 2>/dev/null || date -v-5M '+%d/%b/%Y:%H:%M' 2>/dev/null)" \
+    '$0 > d' "$NGINX_LOG" 2>/dev/null | tail -200)
+
+  # Много запросов с одного IP (> 20 за 5 мин)
+  SUSPICIOUS=$(echo "$RECENT" | awk '{print $1}' | sort | uniq -c | sort -rn | \
+    awk '$1 > 20 {print $1, $2}' 2>/dev/null)
+
+  if [[ -n "$SUSPICIOUS" ]]; then
+    log "WARN: Подозрительная активность: $SUSPICIOUS"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] PROBE: $SUSPICIOUS" >> "$PROBE_LOG"
+    notify "🔍 Возможный active probing: $SUSPICIOUS"
+  fi
+
+  # Replay атаки из Prometheus
+  PROM_PORTS_LIST="${MTG_PROM_PORTS:-3129}"
+  IFS='|' read -ra PPORTS <<< "$PROM_PORTS_LIST"
+  for port in "${PPORTS[@]}"; do
+    REPLAYS=$(curl -sf --max-time 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null | \
+      grep '^mtg_replay_attacks ' | awk '{print int($2)}')
+    if [[ -n "$REPLAYS" && "$REPLAYS" -gt 5 ]]; then
+      log "WARN: Replay атак на порту $port: $REPLAYS"
+      notify "🛡️ Обнаружены replay атаки ($REPLAYS) — возможно active probing ТСПУ"
+    fi
+  done
 fi
 WATCHDOG
 
 chmod +x "$HIDE_DIR/bin/watchdog.sh"
 
-# Systemd timer для watchdog
+# Systemd timer
 cat > /etc/systemd/system/hipr-watchdog.service << EOF
 [Unit]
-Description=HIPR Watchdog — проверка DC и перезапуск
+Description=HIPR Watchdog
 After=hipr-mtg.service
 
 [Service]
@@ -1119,14 +1579,13 @@ StandardOutput=append:$HIDE_DIR/logs/watchdog.log
 StandardError=append:$HIDE_DIR/logs/watchdog.log
 EOF
 
-cat > /etc/systemd/system/hipr-watchdog.timer << EOF
+cat > /etc/systemd/system/hipr-watchdog.timer << 'EOF'
 [Unit]
 Description=HIPR Watchdog timer
-Requires=hipr-watchdog.service
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=60s
+OnUnitActiveSec=5min
 Unit=hipr-watchdog.service
 
 [Install]
@@ -1136,8 +1595,83 @@ EOF
 systemctl daemon-reload
 systemctl enable hipr-watchdog.timer 2>/dev/null
 systemctl start hipr-watchdog.timer 2>/dev/null
-ok "Watchdog запущен (каждые 60 секунд)"
+ok "Watchdog запущен (каждые 5 минут)"
 done_step
+
+# ── Ежедневный отчёт в бот ────────────────────────────────────────────────
+if [[ -n "$BOT_TOKEN" ]]; then
+  step "Ежедневный отчёт в Telegram"
+
+  cat > "$HIDE_DIR/bin/daily-report.sh" << 'REPORT'
+#!/bin/bash
+CONFIG="/opt/hipr/config.env"
+[[ -f "$CONFIG" ]] && source "$CONFIG"
+[[ -z "${BOT_TOKEN:-}" || -z "${BOT_CHAT_ID:-}" ]] && exit 0
+
+# Собираем метрики со всех инстансов
+IFS='|' read -ra PPORTS <<< "${MTG_PROM_PORTS:-3129}"
+IFS='|' read -ra SNIS   <<< "${SNI_DOMAINS:-microsoft.com}"
+
+TOTAL_ACTIVE=0; TOTAL_TG=0; TOTAL_BYTES=0; TOTAL_REPLAYS=0
+INST_LINES=""
+
+for i in "${!PPORTS[@]}"; do
+  port="${PPORTS[$i]}"
+  sni="${SNIS[$i]:-?}"
+  metrics=$(curl -sf --max-time 3 "http://127.0.0.1:${port}/metrics" 2>/dev/null)
+  [[ -z "$metrics" ]] && continue
+
+  active=$(echo "$metrics" | grep '^mtg_client_connections{' | awk '{sum+=$2} END{print int(sum)}')
+  tg=$(echo "$metrics" | grep '^mtg_telegram_connections{' | awk '{sum+=$2} END{print int(sum)}')
+  bytes=$(echo "$metrics" | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
+  replays=$(echo "$metrics" | grep '^mtg_replay_attacks ' | awk '{print int($2)}')
+
+  TOTAL_ACTIVE=$((TOTAL_ACTIVE + ${active:-0}))
+  TOTAL_TG=$((TOTAL_TG + ${tg:-0}))
+  TOTAL_BYTES=$((TOTAL_BYTES + ${bytes:-0}))
+  TOTAL_REPLAYS=$((TOTAL_REPLAYS + ${replays:-0}))
+  INST_LINES="${INST_LINES}  • ${sni}: ${active:-0} акт / $(echo "$bytes" | \
+    python3 -c 'import sys; b=int(sys.stdin.read().strip() or 0); print(f"{b/1048576:.1f}MB")' 2>/dev/null || echo "—")\n"
+done
+
+fmt_bytes() {
+  python3 -c "
+b=$1
+if b > 1073741824: print(f'{b/1073741824:.1f} GB')
+elif b > 1048576: print(f'{b/1048576:.1f} MB')
+else: print(f'{b/1024:.1f} KB')
+" 2>/dev/null || echo "${1}B"
+}
+
+MSG="📊 <b>HIPR дневной отчёт</b>
+$(date '+%d.%m.%Y')
+
+🟢 Активных соединений: <b>${TOTAL_ACTIVE}</b>
+📡 Подключений к Telegram: <b>${TOTAL_TG}</b>
+📦 Трафик: <b>$(fmt_bytes $TOTAL_BYTES)</b>
+🛡️ Replay атак: <b>${TOTAL_REPLAYS}</b>
+
+🌐 Домен: ${DOMAIN}
+📡 DC: ${ACTIVE_DC}
+
+$(echo -e "$INST_LINES")"
+
+curl -s --max-time 10 \
+  "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+  -d "chat_id=${BOT_CHAT_ID}" \
+  --data-urlencode "text=${MSG}" \
+  -d "parse_mode=HTML" > /dev/null 2>&1 || true
+REPORT
+
+  chmod +x "$HIDE_DIR/bin/daily-report.sh"
+
+  # Cron в 20:00 МСК (17:00 UTC)
+  (crontab -l 2>/dev/null | grep -v 'daily-report'
+   echo "0 17 * * * $HIDE_DIR/bin/daily-report.sh") | crontab -
+
+  ok "Ежедневный отчёт в 20:00 МСК"
+  done_step
+fi
 
 # ── fail2ban + ufw ────────────────────────────────────────────────────────
 step "Безопасность"
@@ -1155,73 +1689,69 @@ systemctl restart fail2ban 2>/dev/null
 ok "fail2ban настроен"
 
 ufw --force reset    > /dev/null 2>&1
-ufw default deny incoming > /dev/null 2>&1
+ufw default deny incoming  > /dev/null 2>&1
 ufw default allow outgoing > /dev/null 2>&1
-ufw allow ssh  > /dev/null 2>&1
+ufw allow ssh    > /dev/null 2>&1
 ufw allow 80/tcp  > /dev/null 2>&1
 ufw allow 443/tcp > /dev/null 2>&1
+[[ "$INSTALL_GRAFANA" == "true" ]] && ufw allow 3000/tcp > /dev/null 2>&1 || true
 ufw --force enable > /dev/null 2>&1
-ok "ufw: разрешены SSH, 80, 443"
+ok "ufw настроен"
 done_step
 
-# ── Итог ──────────────────────────────────────────────────────────────────
+# ── Финальный вывод ───────────────────────────────────────────────────────
 source "$CONFIG_FILE"
 
-TG_LINK="tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}"
-HTTPS_LINK="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}"
-
 echo ""
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
-echo -e "${G}${BOLD}  ✓  HIPR v$VERSION успешно установлен!${N}"
+echo -e "${G}${BOLD}  ✅  HIPR v${VERSION} успешно установлен!${N}"
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo ""
-echo -e "  ${BOLD}Компоненты:${N}"
-echo -e "  ${G}✓${N}  mtg v$MTG_VER (FakeTLS обфускация)"
-echo -e "  ${G}✓${N}  nginx + TLS (Let's Encrypt)"
-echo -e "  ${G}✓${N}  Сайт-обманка: $INITIAL_THEME"
-echo -e "  ${G}✓${N}  Watchdog (авто-смена DC, каждые 60с)"
-echo -e "  ${G}✓${N}  fail2ban + ufw"
-echo -e "  ${G}✓${N}  Команда: hide"
+echo -e "  ${BOLD}Режим: ${C}$MODE${N}"
 echo ""
-echo -e "  ${BOLD}Ссылка для Telegram:${N}"
-echo ""
-echo -e "  ${C}${TG_LINK}${N}"
-echo ""
-echo -e "  ${DIM}Или через браузер:${N}"
-echo -e "  ${Y}${HTTPS_LINK}${N}"
-echo ""
+echo -e "  ${BOLD}Ссылки для Telegram:${N}\n"
 
-if command -v qrencode &>/dev/null; then
-  echo -e "  ${BOLD}QR-код:${N}\n"
-  qrencode -t ANSIUTF8 -l M "$HTTPS_LINK" 2>/dev/null | sed 's/^/  /'
+IFS='|' read -ra _SNIS    <<< "$SNI_DOMAINS"
+IFS='|' read -ra _SECRETS <<< "$MTG_SECRETS"
+
+for i in "${!_SNIS[@]}"; do
+  sni="${_SNIS[$i]}"
+  secret="${_SECRETS[$i]}"
+  tg_link="tg://proxy?server=${DOMAIN}&port=443&secret=${secret}"
+  echo -e "  ${DIM}[$((i+1))] SNI: $sni${N}"
+  echo -e "  ${C}${tg_link}${N}"
+  echo ""
+done
+
+if command -v qrencode &>/dev/null && [[ ${#_SNIS[@]} -eq 1 ]]; then
+  ht_link="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${_SECRETS[0]}"
+  echo -e "  ${BOLD}📱 QR-код:${N}\n"
+  qrencode -t ANSIUTF8 -l M "$ht_link" 2>/dev/null | sed 's/^/  /'
   echo ""
 fi
 
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo -e "  ${W}hide${N}  — открыть меню управления"
+[[ "$INSTALL_GRAFANA" == "true" ]] && \
+  echo -e "  ${W}Grafana${N}: $GRAFANA_URL  логин: admin / $GRAFANA_PASS"
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo ""
 
-if [[ "$CERT_OK" == "false" ]]; then
-  echo -e "  ${Y}${BOLD}Осталось: настройте DNS${N}"
-  echo -e "  A-запись: ${W}$DOMAIN${N} → ${W}${MY_IP:-IP-сервера}${N}"
-  echo -e "  Потом:    ${W}hide${N} → Настройки → Получить сертификат"
-  echo ""
-fi
-
-# ── Итоговая диагностика ──────────────────────────────────────────────────
-echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+# Итоговая диагностика
 echo -e "  ${BOLD}Статус сервисов:${N}"
-for svc in hipr-mtg nginx hipr-watchdog.timer; do
-  if systemctl is-active --quiet "$svc" 2>/dev/null; then
-    echo -e "  ${G}✓${N}  $svc"
-  else
-    echo -e "  ${R}✗${N}  $svc ${DIM}(не запущен)${N}"
-  fi
+for svc in nginx dnsproxy hipr-watchdog.timer; do
+  systemctl is-active --quiet "$svc" 2>/dev/null \
+    && echo -e "  ${G}✓${N}  $svc" || echo -e "  ${R}✗${N}  $svc"
 done
-echo ""
-echo -e "  ${BOLD}Порты:${N}"
-ss -tlnp 2>/dev/null | grep -E ':443|:2398|:8443|:80' \
-  | awk '{print "  " $1 " " $4}' || true
-echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+
+if [[ "$MODE" == "single" ]]; then
+  systemctl is-active --quiet hipr-mtg 2>/dev/null \
+    && echo -e "  ${G}✓${N}  hipr-mtg" || echo -e "  ${R}✗${N}  hipr-mtg"
+else
+  for i in "${!_SNIS[@]}"; do
+    systemctl is-active --quiet "hipr-mtg@${i}" 2>/dev/null \
+      && echo -e "  ${G}✓${N}  hipr-mtg@${i} (${_SNIS[$i]})" \
+      || echo -e "  ${R}✗${N}  hipr-mtg@${i}"
+  done
+fi
 echo ""
