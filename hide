@@ -40,64 +40,52 @@ svc_icon() {
 }
 
 get_stats() {
-  # mtg v2 пишет JSON с unix timestamp в миллисекундах и message="accepted connection"
-  # Считаем все соединения
-  STAT_CONNS=$(grep -c '"message":"accepted connection"' "$LOG_MTG" 2>/dev/null || echo "0")
+  local metrics
+  metrics=$(curl -sf --max-time 2 http://127.0.0.1:3129/metrics 2>/dev/null)
 
-  # Соединения за сегодня — сравниваем timestamp с началом дня в мс
-  local today_start_ms
-  today_start_ms=$(python3 -c "
-import time
-t = time.strptime(time.strftime('%Y-%m-%d'), '%Y-%m-%d')
-print(int(time.mktime(t)) * 1000)
-" 2>/dev/null || echo "0")
-
-  if [[ "$today_start_ms" != "0" && -f "$LOG_MTG" ]]; then
-    STAT_TODAY=$(python3 -c "
-import json, sys
-start = $today_start_ms
-count = 0
-for line in open('$LOG_MTG', errors='ignore'):
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        d = json.loads(line)
-        if d.get('message') == 'accepted connection' and d.get('timestamp', 0) >= start:
-            count += 1
-    except:
-        pass
-print(count)
-" 2>/dev/null || echo "0")
-  else
-    STAT_TODAY="0"
+  if [[ -z "$metrics" ]]; then
+    STAT_CONNS="—"; STAT_TODAY="—"; STAT_BYTES="—"
+    STAT_ACTIVE="0"; STAT_TG_CONNS="0"; STAT_FRONTING="0"
+    return
   fi
 
-  # Трафик — суммируем bytes_from_client и bytes_from_telegram
-  STAT_BYTES=$(python3 -c "
-import json
-total = 0
-try:
-    for line in open('$LOG_MTG', errors='ignore'):
-        line = line.strip()
-        if not line: continue
-        try:
-            d = json.loads(line)
-            total += d.get('bytes_from_client', 0) + d.get('bytes_from_telegram', 0)
-        except:
-            pass
-# Форматируем
-if total > 1073741824:
-    print(f'{total/1073741824:.1f} GB')
-elif total > 1048576:
-    print(f'{total/1048576:.1f} MB')
-elif total > 1024:
-    print(f'{total/1024:.1f} KB')
-else:
-    print(f'{total} B')
-except:
-    print('—')
-" 2>/dev/null || echo "—")
+  # Активные соединения прямо сейчас
+  STAT_ACTIVE=$(echo "$metrics" | grep '^mtg_client_connections{' \
+    | awk '{sum+=$2} END{print int(sum)}')
+
+  # Всего domain fronting событий (FakeTLS handshakes)
+  STAT_FRONTING=$(echo "$metrics" | grep '^mtg_domain_fronting ' \
+    | awk '{print int($2)}')
+
+  # Активных соединений к Telegram
+  STAT_TG_CONNS=$(echo "$metrics" | grep '^mtg_telegram_connections{' \
+    | awk '{sum+=$2} END{print int(sum)}')
+
+  # Суммарный трафик (from_client + to_client к Telegram)
+  local bytes_total
+  bytes_total=$(echo "$metrics" | grep '^mtg_telegram_traffic{' \
+    | awk '{sum+=$2} END{print int(sum)}')
+  local bytes_front
+  bytes_front=$(echo "$metrics" | grep '^mtg_domain_fronting_traffic{' \
+    | awk '{sum+=$2} END{print int(sum)}')
+  local bytes_all=$(( bytes_total + bytes_front ))
+
+  if (( bytes_all > 1073741824 )); then
+    STAT_BYTES=$(python3 -c "print(f'{$bytes_all/1073741824:.1f} GB')")
+  elif (( bytes_all > 1048576 )); then
+    STAT_BYTES=$(python3 -c "print(f'{$bytes_all/1048576:.1f} MB')")
+  elif (( bytes_all > 1024 )); then
+    STAT_BYTES=$(python3 -c "print(f'{$bytes_all/1024:.1f} KB')")
+  else
+    STAT_BYTES="${bytes_all} B"
+  fi
+
+  # Replay атаки (active probing детект)
+  STAT_REPLAYS=$(echo "$metrics" | grep '^mtg_replay_attacks ' \
+    | awk '{print int($2)}')
+
+  STAT_CONNS="$STAT_ACTIVE"
+  STAT_TODAY="$STAT_TG_CONNS"
 }
 
 active_theme() {
@@ -127,8 +115,8 @@ draw_header() {
   kvc "📡 DC:"       "${ACTIVE_DC:-—}"
   kv  "🎨 Тема:"    "$(active_theme)"
   sep
-  printf "${B}  ║${N}  📊  ${DIM}Сегодня${N}  ${Y}%-8s${N}  ${DIM}Всего${N}  ${Y}%-10s${N}  ${DIM}Трафик${N}  ${Y}%-6s${N}${B}║${N}\n" \
-    "$STAT_TODAY" "$STAT_CONNS" "$STAT_BYTES"
+  printf "${B}  ║${N}  📊  ${DIM}Активных${N}  ${Y}%-4s${N}  ${DIM}→ Telegram${N}  ${Y}%-4s${N}  ${DIM}Трафик${N}  ${Y}%-8s${N}  ${DIM}Probing${N}  ${Y}%-4s${N}${B}║${N}\n" \
+    "$STAT_ACTIVE" "$STAT_TG_CONNS" "$STAT_BYTES" "${STAT_REPLAYS:-0}"
   row ""; bot_b; echo ""
 }
 
@@ -188,7 +176,9 @@ menu_status() {
     kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
     kv "🎨 Тема сайта:" "$(active_theme)"
     sep
-    kv "🔗 Соединений:" "$STAT_CONNS всего / $STAT_TODAY сегодня / $STAT_BYTES"
+    kv "🔗 Активных:" "$STAT_ACTIVE сейчас / $STAT_TG_CONNS → Telegram"
+    kv "📦 Трафик:" "$STAT_BYTES"
+    kv "🛡️  Probing атак:" "${STAT_REPLAYS:-0}"
     local ce; ce=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}" \
       | grep "Expiry" | awk '{print $3,$4}' | head -1)
     kv "🔒 Сертификат:" "${ce:-—}"
@@ -649,67 +639,69 @@ menu_logs() {
 }
 
 _stats_today() {
-  clear; echo -e "\n  ${BOLD}📊 Статистика за сегодня${N}\n"
+  clear; echo -e "\n  ${BOLD}📊 Статистика прокси${N}\n"
 
-  local today_start_ms
-  today_start_ms=$(python3 -c "
-import time
-t = time.strptime(time.strftime('%Y-%m-%d'), '%Y-%m-%d')
-print(int(time.mktime(t)) * 1000)
-" 2>/dev/null || echo "0")
+  local metrics
+  metrics=$(curl -sf --max-time 3 http://127.0.0.1:3129/metrics 2>/dev/null)
 
-  local result
-  result=$(python3 -c "
-import json, sys
-start = $today_start_ms
-today_c = 0; total_c = 0; errors = 0
-bytes_today = 0; bytes_total = 0
-unique_today = set(); unique_total = set()
-try:
-    for line in open('$LOG_MTG', errors='ignore'):
-        line = line.strip()
-        if not line: continue
-        try:
-            d = json.loads(line)
-            ts = d.get('timestamp', 0)
-            msg = d.get('message', '')
-            lvl = d.get('level', '')
-            if msg == 'accepted connection':
-                total_c += 1
-                ip = d.get('remote_ip') or d.get('client_ip', '')
-                if ip: unique_total.add(ip)
-                b = d.get('bytes_from_client', 0) + d.get('bytes_from_telegram', 0)
-                bytes_total += b
-                if ts >= start:
-                    today_c += 1
-                    if ip: unique_today.add(ip)
-                    bytes_today += b
-            if lvl == 'error':
-                errors += 1
-        except:
-            pass
-except:
-    pass
+  if [[ -z "$metrics" ]]; then
+    echo -e "  ${R}❌ Prometheus недоступен (127.0.0.1:3129)${N}"
+    echo -e "  ${DIM}Проверьте: systemctl status hipr-mtg${N}"
+    echo ""; pause; return
+  fi
 
-def fmt(b):
-    if b > 1073741824: return f'{b/1073741824:.1f} GB'
-    if b > 1048576: return f'{b/1048576:.1f} MB'
-    if b > 1024: return f'{b/1024:.1f} KB'
-    return f'{b} B'
+  local active tg_conns fronting replays concurrency
+  active=$(echo "$metrics" | grep '^mtg_client_connections{' \
+    | awk '{sum+=$2} END{print int(sum)}')
+  tg_conns=$(echo "$metrics" | grep '^mtg_telegram_connections{' \
+    | awk '{sum+=$2} END{print int(sum)}')
+  fronting=$(echo "$metrics" | grep '^mtg_domain_fronting ' \
+    | awk '{print int($2)}')
+  replays=$(echo "$metrics" | grep '^mtg_replay_attacks ' \
+    | awk '{print int($2)}')
+  concurrency=$(echo "$metrics" | grep '^mtg_concurrency_limited ' \
+    | awk '{print int($2)}')
 
-print(today_c, total_c, errors, len(unique_today), len(unique_total), fmt(bytes_today), fmt(bytes_total))
-" 2>/dev/null || echo "0 0 0 0 0 — —")
+  # Трафик к Telegram
+  local tg_in tg_out front_in front_out
+  tg_in=$(echo "$metrics" | grep '^mtg_telegram_traffic{' \
+    | grep 'from_client' | awk '{sum+=$2} END{print int(sum)}')
+  tg_out=$(echo "$metrics" | grep '^mtg_telegram_traffic{' \
+    | grep 'to_client' | awk '{sum+=$2} END{print int(sum)}')
+  front_in=$(echo "$metrics" | grep '^mtg_domain_fronting_traffic{' \
+    | grep 'from_client' | awk '{sum+=$2} END{print int(sum)}')
+  front_out=$(echo "$metrics" | grep '^mtg_domain_fronting_traffic{' \
+    | grep 'to_client' | awk '{sum+=$2} END{print int(sum)}')
 
-  read -r today_c total_c errors uniq_today uniq_total bytes_today bytes_total <<< "$result"
+  fmt_bytes() {
+    local b=$1
+    if (( b > 1073741824 )); then echo "$(python3 -c "print(f'{$b/1073741824:.1f} GB')")";
+    elif (( b > 1048576 )); then echo "$(python3 -c "print(f'{$b/1048576:.1f} MB')")";
+    elif (( b > 1024 )); then echo "$(python3 -c "print(f'{$b/1024:.1f} KB')")";
+    else echo "${b} B"; fi
+  }
 
-  printf "  🔗  %-30s ${Y}%s${N}\n"  "Соединений сегодня:"    "$today_c"
-  printf "  🔗  %-30s ${Y}%s${N}\n"  "Соединений всего:"      "$total_c"
-  printf "  👥  %-30s ${C}%s${N}\n"  "Уникальных IP сегодня:" "$uniq_today"
-  printf "  👥  %-30s ${C}%s${N}\n"  "Уникальных IP всего:"   "$uniq_total"
-  printf "  📦  %-30s ${G}%s${N}\n"  "Трафик сегодня:"        "$bytes_today"
-  printf "  📦  %-30s ${G}%s${N}\n"  "Трафик всего:"          "$bytes_total"
-  printf "  ❌  %-30s ${R}%s${N}\n"  "Ошибок:"                "$errors"
-  echo ""; pause
+  # DC распределение
+  local dc_info
+  dc_info=$(echo "$metrics" | grep '^mtg_telegram_connections{' \
+    | sed 's/mtg_telegram_connections{dc="\([^"]*\)",telegram_ip="\([^"]*\)"} \(.*\)/DC\1 (\2): \3/')
+
+  printf "  🟢  %-30s ${Y}%s${N}\n"  "Активных соединений:"     "${active:-0}"
+  printf "  📡  %-30s ${Y}%s${N}\n"  "→ Telegram DC:"           "${tg_conns:-0}"
+  printf "  📥  %-30s ${G}%s${N}\n"  "Трафик входящий:"         "$(fmt_bytes ${tg_in:-0})"
+  printf "  📤  %-30s ${G}%s${N}\n"  "Трафик исходящий:"        "$(fmt_bytes ${tg_out:-0})"
+  printf "  🎭  %-30s ${C}%s${N}\n"  "FakeTLS handshakes:"      "${fronting:-0}"
+  printf "  🛡️   %-30s ${R}%s${N}\n" "Replay/probing атак:"     "${replays:-0}"
+  printf "  🚫  %-30s ${Y}%s${N}\n"  "Отклонено (лимит):"       "${concurrency:-0}"
+  echo ""
+  if [[ -n "$dc_info" ]]; then
+    echo -e "  ${BOLD}📡 Соединения по DC:${N}"
+    while IFS= read -r line; do
+      echo -e "  ${DIM}$line${N}"
+    done <<< "$dc_info"
+    echo ""
+  fi
+  pause
 }
 
 # ══════════════════════════════════════════════════════════════════════════
