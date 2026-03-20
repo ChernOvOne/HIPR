@@ -1242,7 +1242,7 @@ if [[ "$INSTALL_GRAFANA" == "true" ]]; then
     chmod +x /usr/local/bin/prometheus /usr/local/bin/promtool
     rm -rf /tmp/prometheus.tar.gz /tmp/prometheus-extract
 
-    # Конфиг YAML — строим явно без heredoc-подстановок
+    # Конфиг YAML — каждый target получает метку sni для читаемых имён в Grafana
     {
       echo "global:"
       echo "  scrape_interval: 15s"
@@ -1251,10 +1251,14 @@ if [[ "$INSTALL_GRAFANA" == "true" ]]; then
       echo "scrape_configs:"
       echo "  - job_name: 'hipr_mtg'"
       echo "    static_configs:"
-      echo "      - targets:"
-      for port in "${MTG_PROM_PORTS[@]}"; do
-        echo "          - '127.0.0.1:${port}'"
+      for i in "${!MTG_PROM_PORTS[@]}"; do
+        echo "      - targets: ['127.0.0.1:${MTG_PROM_PORTS[$i]}']"
+        echo "        labels:"
+        echo "          sni: '${SNI_DOMAINS[$i]}'"
       done
+      echo "    relabel_configs:"
+      echo "      - source_labels: [sni]"
+      echo "        target_label: instance"
     } > /etc/prometheus/prometheus.yml
 
     # Проверяем что YAML валидный
