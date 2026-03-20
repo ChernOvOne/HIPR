@@ -1198,7 +1198,15 @@ if [[ "${DNS_OK,,}" != "n" ]]; then
     CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
     ok "Сертификат получен"
 
-    # HTTPS сайт-обманка
+    # HTTPS сайт-заглушка
+    # log_format должен быть в http{} — пишем в отдельный конфиг
+    cat > /etc/nginx/conf.d/hipr-logformat.conf << 'EOF'
+log_format hipr_detailed '$remote_addr - $remote_user [$time_local] '
+                         '"$request" $status $body_bytes_sent '
+                         '"$http_referer" "$http_user_agent" '
+                         '$request_time $ssl_protocol';
+EOF
+
     cat > /etc/nginx/sites-available/hipr-ssl << EOF
 server {
     listen 127.0.0.1:8443 ssl http2;
@@ -1220,11 +1228,6 @@ server {
     add_header Strict-Transport-Security "max-age=63072000" always;
     add_header X-Content-Type-Options "nosniff" always;
 
-    # Расширенный лог для анализа probing
-    log_format hipr_detailed '\$remote_addr - \$remote_user [\$time_local] '
-                              '"\$request" \$status \$body_bytes_sent '
-                              '"\$http_referer" "\$http_user_agent" '
-                              '\$request_time \$ssl_protocol';
     access_log $HIDE_DIR/logs/nginx-access.log hipr_detailed;
     error_log  $HIDE_DIR/logs/nginx-error.log warn;
 
@@ -1364,19 +1367,26 @@ EOF
   # Grafana
   info "Grafana..."
   apt-get install -y -qq apt-transport-https software-properties-common 2>/dev/null
-  wget -q -O /tmp/grafana.gpg https://apt.grafana.com/gpg.key 2>/dev/null
+  mkdir -p /etc/apt/keyrings
+  wget -q -O /tmp/grafana.gpg https://apt.grafana.com/gpg.key 2>/dev/null \
+    || curl -fsSL https://apt.grafana.com/gpg.key -o /tmp/grafana.gpg 2>/dev/null
   gpg --dearmor < /tmp/grafana.gpg > /etc/apt/keyrings/grafana.gpg 2>/dev/null
   echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
     > /etc/apt/sources.list.d/grafana.list
   apt-get update -qq 2>/dev/null
-  apt-get install -y -qq grafana 2>/dev/null
+  apt-get install -y grafana 2>/dev/null
 
-  # Генерируем пароль
-  GRAFANA_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
-  GRAFANA_PASS="${GRAFANA_PASS}1!"
+  # Проверяем что grafana реально установилась
+  if [[ ! -f /etc/grafana/grafana.ini ]]; then
+    warn "Grafana не установилась — пропускаем"
+    INSTALL_GRAFANA=false
+  else
+    # Генерируем пароль
+    GRAFANA_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
+    GRAFANA_PASS="${GRAFANA_PASS}1!"
 
-  # Конфиг Grafana
-  cat > /etc/grafana/grafana.ini << EOF
+    # Конфиг Grafana
+    cat > /etc/grafana/grafana.ini << EOF
 [server]
 http_addr = 127.0.0.1
 http_port = 3000
@@ -1395,11 +1405,14 @@ reporting_enabled = false
 check_for_updates = false
 EOF
 
-  systemctl daemon-reload
-  systemctl enable grafana-server 2>/dev/null
-  systemctl start grafana-server
-  sleep 3
-  systemctl is-active --quiet grafana-server && ok "Grafana запущена" || warn "Grafana не запустилась"
+    systemctl daemon-reload
+    systemctl enable grafana-server 2>/dev/null
+    systemctl start grafana-server
+    sleep 3
+    systemctl is-active --quiet grafana-server \
+      && ok "Grafana запущена" \
+      || warn "Grafana не запустилась — проверьте: journalctl -u grafana-server -n 20"
+  fi
 
   # nginx для Grafana
   if [[ "$CERT_OK" == "true" ]]; then
