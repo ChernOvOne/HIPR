@@ -11,7 +11,7 @@ set -uo pipefail
 VERSION="4.0"
 MTG_VER="2.2.0"
 DNSPROXY_VER="0.81.0"
-GRAFANA_VER="11.4.0"
+GRAFANA_VER="11.6.1"  # Последняя стабильная ветка 11.x (LTS)
 
 # ── Пути ──────────────────────────────────────────────────────────────────
 HIDE_DIR="/opt/hipr"
@@ -1218,9 +1218,9 @@ if [[ "$INSTALL_GRAFANA" == "true" ]]; then
   step "Установка Prometheus + Grafana"
 
   # ── Prometheus ──────────────────────────────────────────────────────────
-  # Определяем архитектуру для Prometheus (совпадает с MTG_ARCH)
   PROM_ARCH="${MTG_ARCH}"
 
+  info "Определяем последнюю версию Prometheus..."
   PROM_VER=$(curl -sf --max-time 10 \
     "https://api.github.com/repos/prometheus/prometheus/releases/latest" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" \
@@ -1229,13 +1229,13 @@ if [[ "$INSTALL_GRAFANA" == "true" ]]; then
   info "Prometheus v$PROM_VER ($PROM_ARCH)..."
   PROM_URL="https://github.com/prometheus/prometheus/releases/download/v${PROM_VER}/prometheus-${PROM_VER}.linux-${PROM_ARCH}.tar.gz"
 
+  PROM_OK=false
   if wget -q "$PROM_URL" -O /tmp/prometheus.tar.gz 2>/dev/null; then
     useradd --system --no-create-home --shell /bin/false prometheus 2>/dev/null || true
     mkdir -p /etc/prometheus /var/lib/prometheus
 
     mkdir -p /tmp/prometheus-extract
     tar -xzf /tmp/prometheus.tar.gz -C /tmp/prometheus-extract/
-    # Ищем бинарники независимо от имени папки внутри архива
     find /tmp/prometheus-extract -name "prometheus" -type f | head -1 | \
       xargs -I{} cp {} /usr/local/bin/prometheus
     find /tmp/prometheus-extract -name "promtool" -type f | head -1 | \
@@ -1243,7 +1243,7 @@ if [[ "$INSTALL_GRAFANA" == "true" ]]; then
     chmod +x /usr/local/bin/prometheus /usr/local/bin/promtool
     rm -rf /tmp/prometheus.tar.gz /tmp/prometheus-extract
 
-    # Конфиг Prometheus — строим YAML корректно без сложных heredoc-подстановок
+    # Конфиг YAML — строим явно без heredoc-подстановок
     {
       echo "global:"
       echo "  scrape_interval: 15s"
@@ -1256,38 +1256,68 @@ if [[ "$INSTALL_GRAFANA" == "true" ]]; then
       for port in "${MTG_PROM_PORTS[@]}"; do
         echo "          - '127.0.0.1:${port}'"
       done
-      echo "    relabel_configs:"
-      echo "      - source_labels: [__address__]"
-      echo "        target_label: instance"
     } > /etc/prometheus/prometheus.yml
+
+    # Проверяем что YAML валидный
+    if /usr/local/bin/promtool check config /etc/prometheus/prometheus.yml > /dev/null 2>&1; then
+      ok "prometheus.yml валидный"
+    else
+      warn "prometheus.yml невалидный — пересоздаём минимальный конфиг"
+      cat > /etc/prometheus/prometheus.yml << 'PMINYML'
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'hipr_mtg'
+    static_configs:
+      - targets: ['127.0.0.1:3129']
+PMINYML
+    fi
 
     cat > /etc/systemd/system/prometheus.service << 'EOF'
 [Unit]
 Description=Prometheus
 After=network-online.target
+Wants=network-online.target
 
 [Service]
+Type=simple
 User=prometheus
+Group=prometheus
 ExecStart=/usr/local/bin/prometheus \
   --config.file=/etc/prometheus/prometheus.yml \
   --storage.tsdb.path=/var/lib/prometheus \
   --storage.tsdb.retention.time=30d \
-  --web.listen-address=127.0.0.1:9090
+  --web.listen-address=127.0.0.1:9090 \
+  --log.level=warn
 Restart=always
 RestartSec=5
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
+    # Права — критично, без этого prometheus не стартует
     chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus
+    chmod 755 /etc/prometheus /var/lib/prometheus
+    chmod 644 /etc/prometheus/prometheus.yml
+
     systemctl daemon-reload
     systemctl enable prometheus 2>/dev/null
     systemctl start prometheus
     sleep 3
-    systemctl is-active --quiet prometheus \
-      && ok "Prometheus запущен (127.0.0.1:9090)" \
-      || warn "Prometheus не запустился — journalctl -u prometheus -n 20"
+
+    if systemctl is-active --quiet prometheus; then
+      ok "Prometheus запущен (127.0.0.1:9090)"
+      PROM_OK=true
+    else
+      warn "Prometheus не запустился"
+      # Диагностика
+      PROM_ERR=$(journalctl -u prometheus -n 5 --no-pager 2>/dev/null | tail -3)
+      warn "Лог: $PROM_ERR"
+    fi
   else
     warn "Не удалось скачать Prometheus — пропускаем"
   fi
@@ -1296,45 +1326,88 @@ EOF
   info "Grafana — пробуем установить..."
   GRAFANA_OK=false
 
+  # Определяем архитектуру для deb имени файла
+  case "$MTG_ARCH" in
+    amd64)  GRAFANA_ARCH_DEB="amd64" ;;
+    arm64)  GRAFANA_ARCH_DEB="arm64" ;;
+    arm-7)  GRAFANA_ARCH_DEB="armhf" ;;
+    *)      GRAFANA_ARCH_DEB="amd64" ;;
+  esac
+
   # Метод 1: APT-репозиторий Grafana (может быть заблокирован с РФ-IP)
-  info "Метод 1: apt.grafana.com..."
+  info "Метод 1: apt.grafana.com (официальный репозиторий)..."
   mkdir -p /etc/apt/keyrings
   if curl -fsSL --max-time 15 https://apt.grafana.com/gpg.key \
-       -o /tmp/grafana.gpg 2>/dev/null; then
-    gpg --dearmor < /tmp/grafana.gpg > /etc/apt/keyrings/grafana.gpg 2>/dev/null && \
+       -o /tmp/grafana.gpg 2>/dev/null \
+     && gpg --dearmor < /tmp/grafana.gpg > /etc/apt/keyrings/grafana.gpg 2>/dev/null; then
     echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
-      > /etc/apt/sources.list.d/grafana.list && \
-    apt-get update -qq 2>/dev/null && \
-    apt-get install -y grafana 2>/dev/null && \
-    GRAFANA_OK=true
+      > /etc/apt/sources.list.d/grafana.list
+    if apt-get update -qq 2>/dev/null \
+       && apt-get install -y -qq grafana 2>/dev/null; then
+      GRAFANA_OK=true
+      ok "Grafana установлена через APT"
+    fi
   fi
+  rm -f /tmp/grafana.gpg
 
-  # Метод 2: Скачать .deb напрямую с GitHub Releases (не заблокирован)
+  # Метод 2: dl.grafana.com — официальный CDN Grafana Labs (не GitHub!)
+  # GitHub Releases у Grafana содержит только исходники, .deb там нет
   if [[ "$GRAFANA_OK" == "false" ]]; then
-    warn "APT-репозиторий недоступен (403 РФ-IP?) — пробуем GitHub Releases..."
-    info "Метод 2: github.com/grafana/grafana/releases..."
-    GRAFANA_DEB_URL="https://github.com/grafana/grafana/releases/download/v${GRAFANA_VER}/grafana_${GRAFANA_VER}_${GRAFANA_ARCH}.deb"
-    if wget -q --show-progress "$GRAFANA_DEB_URL" -O /tmp/grafana.deb 2>/dev/null; then
-      dpkg -i /tmp/grafana.deb 2>/dev/null && GRAFANA_OK=true
-      apt-get install -f -y -qq 2>/dev/null  # подтянуть зависимости если нужно
+    warn "APT-репозиторий недоступен (вероятно 403 с РФ-IP)"
+    info "Метод 2: dl.grafana.com (официальный CDN, OSS edition)..."
+
+    # Пробуем получить актуальную версию через API
+    GRAFANA_DL_VER=$(curl -sf --max-time 10 \
+      "https://grafana.com/api/grafana/versions/stable" \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('version',''))" \
+      2>/dev/null || echo "")
+    # Fallback на захардкоженную версию если API недоступен
+    [[ -z "$GRAFANA_DL_VER" ]] && GRAFANA_DL_VER="${GRAFANA_VER}"
+
+    info "Версия: $GRAFANA_DL_VER, архитектура: $GRAFANA_ARCH_DEB"
+
+    # Зависимости для .deb
+    apt-get install -y -qq adduser libfontconfig1 musl 2>/dev/null || \
+      apt-get install -y -qq adduser libfontconfig1 2>/dev/null || true
+
+    GRAFANA_DEB_URL="https://dl.grafana.com/oss/release/grafana_${GRAFANA_DL_VER}_${GRAFANA_ARCH_DEB}.deb"
+    info "URL: $GRAFANA_DEB_URL"
+
+    if wget -q --show-progress "$GRAFANA_DEB_URL" -O /tmp/grafana.deb 2>&1 | \
+         grep -v "^$" | tail -2; then
+      if [[ -f /tmp/grafana.deb && $(stat -c%s /tmp/grafana.deb 2>/dev/null) -gt 10000 ]]; then
+        if dpkg -i /tmp/grafana.deb 2>/dev/null; then
+          apt-get install -f -y -qq 2>/dev/null || true
+          GRAFANA_OK=true
+          ok "Grafana $GRAFANA_DL_VER установлена через dl.grafana.com"
+        else
+          warn "dpkg -i завершился с ошибкой"
+          apt-get install -f -y -qq 2>/dev/null || true
+          [[ -f /etc/grafana/grafana.ini ]] && GRAFANA_OK=true
+        fi
+      else
+        warn "Скачанный файл пустой или слишком маленький"
+      fi
       rm -f /tmp/grafana.deb
     else
-      warn "Не удалось скачать Grafana с GitHub"
+      warn "wget не смог скачать .deb с dl.grafana.com"
+      info "Проверьте вручную: curl -I '$GRAFANA_DEB_URL'"
     fi
   fi
 
   if [[ "$GRAFANA_OK" == "false" || ! -f /etc/grafana/grafana.ini ]]; then
     warn "Grafana не установилась — пропускаем"
+    warn "Установить вручную:"
+    warn "  wget https://dl.grafana.com/oss/release/grafana_${GRAFANA_VER}_${GRAFANA_ARCH_DEB}.deb"
+    warn "  dpkg -i grafana_${GRAFANA_VER}_${GRAFANA_ARCH_DEB}.deb"
     INSTALL_GRAFANA=false
     sed -i 's/INSTALL_GRAFANA=.*/INSTALL_GRAFANA="false"/' "$CONFIG_FILE"
   else
     ok "Grafana установлена"
 
-    # Генерируем пароль
     GRAFANA_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
     GRAFANA_PASS="${GRAFANA_PASS}1!"
 
-    # Конфиг Grafana
     cat > /etc/grafana/grafana.ini << EOF
 [server]
 http_addr = 127.0.0.1
@@ -1404,7 +1477,6 @@ EOF
       ok "nginx настроен для Grafana"
     fi
 
-    # Сохраняем пароль в конфиг
     echo "GRAFANA_PASS=\"$GRAFANA_PASS\"" >> "$CONFIG_FILE"
     ok "Grafana пароль: $GRAFANA_PASS"
   fi
