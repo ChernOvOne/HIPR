@@ -320,19 +320,22 @@ _speed_test() {
   # Возвращает скорость в Мбит/с через переменную SPEED_RESULT_MBIT
   _speed_dl() {
     local label="$1" url="$2"
+    # Скачиваем максимум 8 секунд — на быстром канале успеем скачать много
+    # limit-rate не ставим чтобы не занижать результат
     local raw; raw=$(curl -o /dev/null -w "%{speed_download}" \
-      --max-time 12 --silent "$url" 2>/dev/null || echo "0")
-    # Убираем возможный пробел/перенос
+      --max-time 8 --silent \
+      --limit-rate 0 \
+      "$url" 2>/dev/null || echo "0")
     raw=$(echo "$raw" | tr -d '[:space:]')
-    local mbit; mbit=$(python3 -c "b=float('${raw:-0}'); print(f'{b*8/1048576:.1f}')" 2>/dev/null || echo "0")
-    local mb;   mb=$(python3 -c   "b=float('${raw:-0}'); print(f'{b/1048576:.1f}')"   2>/dev/null || echo "0")
-    # Если скорость < 0.01 MB/s — считаем недоступным
-    local raw_int; raw_int=$(echo "$raw" | cut -d. -f1)
-    if [[ "${raw_int:-0}" -lt 100 ]] 2>/dev/null; then
+    local raw_int; raw_int=$(echo "${raw:-0}" | cut -d. -f1)
+    # Меньше 1KB/s — считаем недоступным
+    if [[ "${raw_int:-0}" -lt 1024 ]] 2>/dev/null; then
       printf "  🔴  %-26s ${R}недоступен / нет ответа${N}\n" "$label"
       SPEED_RESULT_MBIT="0"
       return
     fi
+    local mbit; mbit=$(python3 -c "b=float('${raw:-0}'); print(f'{b*8/1048576:.1f}')" 2>/dev/null || echo "0")
+    local mb;   mb=$(python3 -c   "b=float('${raw:-0}'); print(f'{b/1048576:.1f}')"   2>/dev/null || echo "0")
     local color="$G"
     (( $(echo "$mbit < 50" | bc -l 2>/dev/null) )) && color="$Y"
     (( $(echo "$mbit < 5"  | bc -l 2>/dev/null) )) && color="$R"
@@ -341,9 +344,10 @@ _speed_test() {
   }
 
   echo -e "  ${DIM}Международные CDN:${N}"
-  # Cloudflare — основной тест, результат сохраняем для рекомендаций
-  _speed_dl "Cloudflare (10MB)" \
-    "https://speed.cloudflare.com/__down?bytes=10000000"
+  echo -e "  ${DIM}Скачиваем до 100MB с Cloudflare (макс 8 сек)...${N}"
+  # Cloudflare — основной тест канала VPS, результат сохраняем для рекомендаций
+  _speed_dl "Cloudflare" \
+    "https://speed.cloudflare.com/__down?bytes=104857600"
   local vps_speed_mbit="${SPEED_RESULT_MBIT:-0}"
 
   echo -e "  ${DIM}Российские сервисы (speedtest):${N}"
