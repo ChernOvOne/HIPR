@@ -346,20 +346,55 @@ _speed_test() {
     "https://speed.cloudflare.com/__down?bytes=10000000"
   local vps_speed_mbit="${SPEED_RESULT_MBIT:-0}"
 
-  echo -e "  ${DIM}Российские сервисы:${N}"
-  # Яндекс — используем favicon (всегда доступен, небольшой файл для замера latency/доступности)
-  # Для реального замера скорости — скачиваем большой публичный файл Яндекса
-  _speed_dl "Яндекс (yandex.ru)" \
-    "https://yandex.ru/internet/"
-  # VK — публичная статика
-  _speed_dl "VK CDN" \
-    "https://vk.com/images/icons/favicons/fav_logo_2x.png"
-  # Mail.ru
-  _speed_dl "Mail.ru" \
-    "https://mail.ru/favicon.ico"
-  # 2ip.ru — популярный российский сервис проверки IP
-  _speed_dl "2ip.ru" \
-    "https://2ip.ru/favicon.ico"
+  echo -e "  ${DIM}Российские сервисы (speedtest):${N}"
+
+  # Проверяем наличие speedtest-cli
+  local has_speedtest=false
+  if command -v speedtest &>/dev/null || command -v speedtest-cli &>/dev/null; then
+    has_speedtest=true
+  elif pip3 show speedtest-cli &>/dev/null 2>&1; then
+    has_speedtest=true
+  fi
+
+  if [[ "$has_speedtest" == "true" ]]; then
+    echo -e "  ${DIM}Запускаем speedtest до ближайшего RU сервера...${N}"
+    local ST_CMD; ST_CMD=$(command -v speedtest 2>/dev/null || command -v speedtest-cli 2>/dev/null)
+
+    # Находим ближайший российский сервер и тестируем
+    local st_out; st_out=$("$ST_CMD" --simple --timeout 30 2>/dev/null)
+    if [[ -n "$st_out" ]]; then
+      local dl; dl=$(echo "$st_out" | grep -i "download" | awk '{print $2, $3}')
+      local ul; ul=$(echo "$st_out" | grep -i "upload"   | awk '{print $2, $3}')
+      local ping_st; ping_st=$(echo "$st_out" | grep -i "ping" | awk '{print $2, $3}')
+      printf "  📊  %-26s ${G}%s${N}\n" "Скачивание:"  "$dl"
+      printf "  📊  %-26s ${G}%s${N}\n" "Отдача:"      "$ul"
+      printf "  📊  %-26s ${G}%s${N}\n" "Ping:"        "$ping_st"
+    else
+      echo -e "  ${Y}  speedtest не смог получить результат${N}"
+    fi
+  else
+    # Fallback — устанавливаем speedtest-cli
+    echo -e "  ${Y}  speedtest-cli не найден — устанавливаем...${N}"
+    pip3 install speedtest-cli -q --break-system-packages 2>/dev/null \
+      || pip3 install speedtest-cli -q 2>/dev/null
+    if command -v speedtest &>/dev/null || command -v speedtest-cli &>/dev/null; then
+      local ST_CMD; ST_CMD=$(command -v speedtest 2>/dev/null || command -v speedtest-cli 2>/dev/null)
+      local st_out; st_out=$("$ST_CMD" --simple --timeout 30 2>/dev/null)
+      if [[ -n "$st_out" ]]; then
+        local dl; dl=$(echo "$st_out" | grep -i "download" | awk '{print $2, $3}')
+        local ul; ul=$(echo "$st_out" | grep -i "upload"   | awk '{print $2, $3}')
+        local ping_st; ping_st=$(echo "$st_out" | grep -i "ping" | awk '{print $2, $3}')
+        printf "  📊  %-26s ${G}%s${N}\n" "Скачивание:"  "$dl"
+        printf "  📊  %-26s ${G}%s${N}\n" "Отдача:"      "$ul"
+        printf "  📊  %-26s ${G}%s${N}\n" "Ping:"        "$ping_st"
+      fi
+    else
+      # Последний fallback — curl до VK и Яндекс напрямую
+      echo -e "  ${DIM}  Установка не удалась — fallback на curl...${N}"
+      _speed_dl "VK (vk.com)"    "https://vk.com/js/api/openapi.js?169"
+      _speed_dl "2ip.io"         "https://2ip.io/"
+    fi
+  fi
 
   # vps_speed_mbit уже установлен из первого Cloudflare замера — не делаем второй запрос
 
