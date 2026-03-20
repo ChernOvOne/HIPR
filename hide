@@ -352,52 +352,40 @@ _speed_test() {
 
   echo -e "  ${DIM}Российские сервисы (speedtest):${N}"
 
-  # Проверяем наличие speedtest-cli
-  local has_speedtest=false
-  if command -v speedtest &>/dev/null || command -v speedtest-cli &>/dev/null; then
-    has_speedtest=true
-  elif pip3 show speedtest-cli &>/dev/null 2>&1; then
-    has_speedtest=true
+  # Проверяем доступность Ookla
+  local ookla_ok=false
+  if (command -v speedtest &>/dev/null || command -v speedtest-cli &>/dev/null) \
+     && curl -sf --max-time 5 https://www.speedtest.net/speedtest-config.php > /dev/null 2>&1; then
+    ookla_ok=true
   fi
 
-  if [[ "$has_speedtest" == "true" ]]; then
-    echo -e "  ${DIM}Запускаем speedtest до ближайшего RU сервера...${N}"
+  if [[ "$ookla_ok" == "true" ]]; then
+    echo -e "  ${DIM}Запускаем speedtest...${N}"
     local ST_CMD; ST_CMD=$(command -v speedtest 2>/dev/null || command -v speedtest-cli 2>/dev/null)
-
-    # Находим ближайший российский сервер и тестируем
     local st_out; st_out=$("$ST_CMD" --simple --timeout 30 2>/dev/null)
     if [[ -n "$st_out" ]]; then
       local dl; dl=$(echo "$st_out" | grep -i "download" | awk '{print $2, $3}')
       local ul; ul=$(echo "$st_out" | grep -i "upload"   | awk '{print $2, $3}')
-      local ping_st; ping_st=$(echo "$st_out" | grep -i "ping" | awk '{print $2, $3}')
-      printf "  📊  %-26s ${G}%s${N}\n" "Скачивание:"  "$dl"
-      printf "  📊  %-26s ${G}%s${N}\n" "Отдача:"      "$ul"
-      printf "  📊  %-26s ${G}%s${N}\n" "Ping:"        "$ping_st"
-    else
-      echo -e "  ${Y}  speedtest не смог получить результат${N}"
+      local pg; pg=$(echo "$st_out" | grep -i "ping"     | awk '{print $2, $3}')
+      printf "  📊  %-26s ${G}%s${N}\n" "Скачивание:" "$dl"
+      printf "  📊  %-26s ${G}%s${N}\n" "Отдача:"     "$ul"
+      printf "  📊  %-26s ${G}%s${N}\n" "Ping:"       "$pg"
     fi
   else
-    # Fallback — устанавливаем speedtest-cli
-    echo -e "  ${Y}  speedtest-cli не найден — устанавливаем...${N}"
-    pip3 install speedtest-cli -q --break-system-packages 2>/dev/null \
-      || pip3 install speedtest-cli -q 2>/dev/null
-    if command -v speedtest &>/dev/null || command -v speedtest-cli &>/dev/null; then
-      local ST_CMD; ST_CMD=$(command -v speedtest 2>/dev/null || command -v speedtest-cli 2>/dev/null)
-      local st_out; st_out=$("$ST_CMD" --simple --timeout 30 2>/dev/null)
-      if [[ -n "$st_out" ]]; then
-        local dl; dl=$(echo "$st_out" | grep -i "download" | awk '{print $2, $3}')
-        local ul; ul=$(echo "$st_out" | grep -i "upload"   | awk '{print $2, $3}')
-        local ping_st; ping_st=$(echo "$st_out" | grep -i "ping" | awk '{print $2, $3}')
-        printf "  📊  %-26s ${G}%s${N}\n" "Скачивание:"  "$dl"
-        printf "  📊  %-26s ${G}%s${N}\n" "Отдача:"      "$ul"
-        printf "  📊  %-26s ${G}%s${N}\n" "Ping:"        "$ping_st"
-      fi
-    else
-      # Последний fallback — curl до VK и Яндекс напрямую
-      echo -e "  ${DIM}  Установка не удалась — fallback на curl...${N}"
-      _speed_dl "VK (vk.com)"    "https://vk.com/js/api/openapi.js?169"
-      _speed_dl "2ip.io"         "https://2ip.io/"
-    fi
+    # Ookla заблокирован — используем curl до надёжных CDN
+    echo -e "  ${DIM}Speedtest.net недоступен — тест через CDN...${N}"
+    # Яндекс CDN — стабильный большой файл
+    _speed_dl "Яндекс CDN" \
+      "https://yastatic.net/s3/home-static/webpack/home/home.js"
+    # VK openapi.js — стабильный ~300KB файл с версией в URL
+    _speed_dl "VK CDN" \
+      "https://vk.com/js/api/openapi.js?169"
+    # Selectel — крупный российский хостинг, публичный CDN
+    _speed_dl "Selectel CDN" \
+      "https://mirror.selectel.ru/pub/ubuntu/dists/noble/Release"
+    # Московский Яндекс зеркало пакетов
+    _speed_dl "Яндекс зеркало" \
+      "https://mirror.yandex.ru/ubuntu/dists/noble/Release"
   fi
 
   # vps_speed_mbit уже установлен из первого Cloudflare замера — не делаем второй запрос
