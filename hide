@@ -270,10 +270,10 @@ _speed_test() {
       local color="$G"
       (( avg_ms > 100 )) && color="$Y"
       (( avg_ms > 200 )) && color="$R"
-      printf "  🟢  %s %s${color}%s мс${N}%b\n" "$name" "$ip" "$avg_ms" "$active_mark"
+      printf "  🟢  %-22s %-20s ${color}%d мс${N}%b\n" "$name" "$ip" "$avg_ms" "$active_mark"
       if (( avg_ms < best_ms )); then best_ms=$avg_ms; best_dc=$ip; fi
     else
-      printf "  🔴  %s %s ${R}недоступен${N}%b\n" "$name" "$ip" "$active_mark"
+      printf "  🔴  %-22s %-20s ${R}недоступен${N}%b\n" "$name" "$ip" "$active_mark"
     fi
   done
 
@@ -317,44 +317,51 @@ _speed_test() {
   # ── 3. Скорость скачивания с разных источников ───────────────────────────
   echo -e "\n  ${BOLD}📦 Скорость скачивания:${N}"
 
+  # Возвращает скорость в Мбит/с через переменную SPEED_RESULT_MBIT
   _speed_dl() {
-    local label="$1" url="$2" size_mb="${3:-5}"
-    local bytes=$(( size_mb * 1024 * 1024 ))
+    local label="$1" url="$2"
     local raw; raw=$(curl -o /dev/null -w "%{speed_download}" \
       --max-time 12 --silent "$url" 2>/dev/null || echo "0")
+    # Убираем возможный пробел/перенос
+    raw=$(echo "$raw" | tr -d '[:space:]')
     local mbit; mbit=$(python3 -c "b=float('${raw:-0}'); print(f'{b*8/1048576:.1f}')" 2>/dev/null || echo "0")
-    local mb; mb=$(python3 -c "b=float('${raw:-0}'); print(f'{b/1048576:.1f}')" 2>/dev/null || echo "0")
-    local color="$G"
-    (( $(echo "$mbit < 50"  | bc -l 2>/dev/null) )) && color="$Y"
-    (( $(echo "$mbit < 5"   | bc -l 2>/dev/null) )) && color="$R"
-    if [[ "$raw" == "0" || -z "$raw" ]]; then
-      printf "  🔴  %-26s ${R}недоступен${N}\n" "$label"
-    else
-      printf "  📊  %-26s ${color}%s Мбит/с${N} ${DIM}(%s MB/s)${N}\n" "$label" "$mbit" "$mb"
+    local mb;   mb=$(python3 -c   "b=float('${raw:-0}'); print(f'{b/1048576:.1f}')"   2>/dev/null || echo "0")
+    # Если скорость < 0.01 MB/s — считаем недоступным
+    local raw_int; raw_int=$(echo "$raw" | cut -d. -f1)
+    if [[ "${raw_int:-0}" -lt 100 ]] 2>/dev/null; then
+      printf "  🔴  %-26s ${R}недоступен / нет ответа${N}\n" "$label"
+      SPEED_RESULT_MBIT="0"
+      return
     fi
+    local color="$G"
+    (( $(echo "$mbit < 50" | bc -l 2>/dev/null) )) && color="$Y"
+    (( $(echo "$mbit < 5"  | bc -l 2>/dev/null) )) && color="$R"
+    printf "  📊  %-26s ${color}%s Мбит/с${N} ${DIM}(%s MB/s)${N}\n" "$label" "$mbit" "$mb"
+    SPEED_RESULT_MBIT="$mbit"
   }
 
   echo -e "  ${DIM}Международные CDN:${N}"
-  _speed_dl "Cloudflare" \
-    "https://speed.cloudflare.com/__down?bytes=10000000" 10
+  # Cloudflare — основной тест, результат сохраняем для рекомендаций
+  _speed_dl "Cloudflare (10MB)" \
+    "https://speed.cloudflare.com/__down?bytes=10000000"
+  local vps_speed_mbit="${SPEED_RESULT_MBIT:-0}"
 
   echo -e "  ${DIM}Российские сервисы:${N}"
-  # Яндекс — публичный файл из CDN
-  _speed_dl "Яндекс CDN" \
-    "https://yastatic.net/s3/lego/_/Kx6F6RQnYFutFnFbxhCOSgBT4tY.svg" 1
-  # VK — статика
+  # Яндекс — используем favicon (всегда доступен, небольшой файл для замера latency/доступности)
+  # Для реального замера скорости — скачиваем большой публичный файл Яндекса
+  _speed_dl "Яндекс (yandex.ru)" \
+    "https://yandex.ru/internet/"
+  # VK — публичная статика
   _speed_dl "VK CDN" \
-    "https://vk.com/images/icons/favicons/fav_logo_2x.png" 1
-  # Mail.ru CDN
-  _speed_dl "Mail.ru CDN" \
-    "https://e.mail.ru/favicon.ico" 1
+    "https://vk.com/images/icons/favicons/fav_logo_2x.png"
+  # Mail.ru
+  _speed_dl "Mail.ru" \
+    "https://mail.ru/favicon.ico"
+  # 2ip.ru — популярный российский сервис проверки IP
+  _speed_dl "2ip.ru" \
+    "https://2ip.ru/favicon.ico"
 
-  # Сохраняем vps_speed_mbit для рекомендаций (берём Cloudflare как основной)
-  local vps_speed_raw; vps_speed_raw=$(curl -o /dev/null -w "%{speed_download}" \
-    --max-time 12 --silent \
-    "https://speed.cloudflare.com/__down?bytes=5000000" 2>/dev/null || echo "0")
-  local vps_speed_mbit; vps_speed_mbit=$(python3 -c \
-    "b=float('${vps_speed_raw:-0}'); print(f'{b*8/1048576:.1f}')" 2>/dev/null || echo "0")
+  # vps_speed_mbit уже установлен из первого Cloudflare замера — не делаем второй запрос
 
   # ── 4. Скорость через mtg → Telegram ────────────────────────────────────
   echo -e "\n  ${BOLD}📡 Пропускная способность VPS → Telegram:${N}"
@@ -379,13 +386,13 @@ _speed_test() {
   done
 
   local delta=$(( bytes_after - bytes_before ))
-  if (( delta > 0 )); then
+  if (( delta > 1024 )); then
     local tg_speed_mb; tg_speed_mb=$(python3 -c "print(f'{${delta}/5/1048576:.2f}')" 2>/dev/null || echo "0")
     local tg_speed_mbit; tg_speed_mbit=$(python3 -c "print(f'{${delta}/5*8/1048576:.1f}')" 2>/dev/null || echo "0")
-    printf "  📊  %-22s ${G}%s Мбит/с${N} ${DIM}(%s MB/s, реальный трафик)${N}\n" \
-      "Через mtg → TG:" "$tg_speed_mbit" "$tg_speed_mb"
+    printf "  📊  %-28s ${G}%s Мбит/с${N} ${DIM}(%s MB/s)${N}\n" \
+      "Реальный трафик → Telegram:" "$tg_speed_mbit" "$tg_speed_mb"
   else
-    echo -e "  ${DIM}  Нет активных пользователей — трафик через прокси 0${N}"
+    printf "  ${DIM}  %-28s нет активных пользователей${N}\n" "Реальный трафик → Telegram:"
     echo -e "  ${DIM}  Подключитесь через прокси и повторите тест${N}"
   fi
 
@@ -394,16 +401,23 @@ _speed_test() {
   echo -e "  ${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
   echo -e "  ${BOLD}💡 Рекомендации:${N}"
 
+  local has_warn=false
   if (( best_ms > 150 )); then
-    echo -e "  ${Y}⚠️  Высокая latency до DC ($best_ms мс) — пользователи почувствуют задержку${N}"
-    echo -e "  ${DIM}   Попробуйте VPS ближе к Европе (Hetzner DE/FI, Contabo DE)${N}"
+    has_warn=true
+    echo -e "  ${Y}⚠️  Высокая latency до DC ($best_ms мс)${N} — пользователи почувствуют задержку"
+    echo -e "  ${DIM}     Попробуйте VPS ближе к Европе (Hetzner DE/FI, Contabo DE)${N}"
   fi
-  if (( $(echo "${vps_speed_mbit:-0} < 50" | bc -l 2>/dev/null) )); then
-    echo -e "  ${Y}⚠️  Низкая скорость канала VPS (${vps_speed_mbit} Мбит/с)${N}"
-    echo -e "  ${DIM}   Провайдер шейпит трафик или канал перегружен${N}"
+  # Рекомендация по скорости только если Cloudflare реально замерили (> 0)
+  local spd_int; spd_int=$(echo "${vps_speed_mbit:-0}" | cut -d. -f1)
+  if [[ "${spd_int:-0}" -gt 0 ]] 2>/dev/null; then
+    if (( $(echo "${vps_speed_mbit} < 50" | bc -l 2>/dev/null) )); then
+      has_warn=true
+      echo -e "  ${Y}⚠️  Низкая скорость канала (${vps_speed_mbit} Мбит/с)${N} — провайдер шейпит трафик"
+      echo -e "  ${DIM}     В пиковые часы скорость может падать ещё ниже${N}"
+    fi
   fi
-  if (( best_ms <= 150 )) && (( $(echo "${vps_speed_mbit:-0} >= 50" | bc -l 2>/dev/null) )); then
-    echo -e "  ${G}✅ Всё в норме — канал и latency хорошие${N}"
+  if [[ "$has_warn" == "false" ]]; then
+    echo -e "  ${G}✅ Всё в норме — DC оптимален (${best_ms} мс), канал хороший (${vps_speed_mbit} Мбит/с)${N}"
   fi
   echo ""
   pause
@@ -426,9 +440,9 @@ _check_all_dc() {
     if timeout 3 bash -c "echo '' > /dev/tcp/$ip/443" 2>/dev/null; then
       local end; end=$(date +%s%N)
       local ms=$(( (end - start) / 1000000 ))
-      printf "  🟢  %-22s %-18s ${G}%dms${N}%b\n" "$name" "$ip" "$ms" "$active_mark"
+      printf "  🟢  %-22s %-20s ${G}%d мс${N}%b\n" "$name" "$ip" "$ms" "$active_mark"
     else
-      printf "  🔴  %-22s %-18s ${R}недоступен${N}%b\n" "$name" "$ip" "$active_mark"
+      printf "  🔴  %-22s %-20s ${R}недоступен${N}%b\n" "$name" "$ip" "$active_mark"
     fi
   done
   echo ""; pause
