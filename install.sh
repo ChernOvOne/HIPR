@@ -269,10 +269,6 @@ apt-get install -y -qq \
   net-tools netcat-openbsd dnsutils \
   qrencode xxd openssl \
   fail2ban ufw unzip apt-transport-https software-properties-common gnupg 2>/dev/null
-
-# speedtest-cli для тестирования скорости канала
-pip3 install speedtest-cli -q --break-system-packages 2>/dev/null || \
-  pip3 install speedtest-cli -q 2>/dev/null || true
 ok "Пакеты установлены"
 
 # DNS фикс для российских VPS
