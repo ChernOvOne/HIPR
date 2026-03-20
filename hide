@@ -797,6 +797,7 @@ menu_settings() {
     echo -e "  ${C}[4]${N}  🤖  Настроить Telegram-бот"
     echo -e "  ${C}[5]${N}  📄  Показать полный конфиг"
     echo -e "  ${C}[6]${N}  🔄  Сменить режим (single ↔ multi)"
+    echo -e "  ${C}[7]${N}  📈  Починить nginx → Grafana"
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
@@ -816,6 +817,7 @@ menu_settings() {
            done
          echo ""; pause ;;
       6) _switch_mode ;;
+      7) _fix_grafana_nginx ;;
       0|q) return ;;
     esac
   done
@@ -1284,6 +1286,127 @@ _renew_cert() {
   certbot renew --force-renewal -d "${DOMAIN:-}" 2>&1 | tail -8
   systemctl reload nginx
   echo -e "\n  ${G}✅ Готово${N}"; sleep 3
+}
+
+_fix_grafana_nginx() {
+  load_cfg; clear
+  echo -e "\n  ${BOLD}📈 Диагностика и починка nginx → Grafana${N}\n"
+
+  # ── 1. Grafana установлена? ──────────────────────────────────────────────
+  if ! systemctl is-enabled grafana-server &>/dev/null; then
+    echo -e "  ${R}❌ grafana-server не установлен${N}"
+    echo -e "  ${DIM}Запустите переустановку: hide → [9] → [1]${N}"
+    pause; return
+  fi
+
+  if ! systemctl is-active --quiet grafana-server; then
+    echo -e "  ${Y}⚠️  grafana-server остановлен — запускаем...${N}"
+    systemctl start grafana-server; sleep 3
+    if ! systemctl is-active --quiet grafana-server; then
+      echo -e "  ${R}❌ Grafana не запускается${N}"
+      journalctl -u grafana-server -n 10 --no-pager 2>/dev/null | sed 's/^/  /'
+      pause; return
+    fi
+    echo -e "  ${G}✅ Grafana запущена${N}"
+  else
+    echo -e "  ${G}✅ grafana-server работает${N}"
+  fi
+
+  # ── 2. Порт 3000 слушается? ──────────────────────────────────────────────
+  if ! ss -tlnp 2>/dev/null | grep -q ':3000'; then
+    echo -e "  ${R}❌ Порт 3000 не слушается${N}"
+    journalctl -u grafana-server -n 5 --no-pager 2>/dev/null | sed 's/^/  /'
+    pause; return
+  fi
+  echo -e "  ${G}✅ Порт 3000 активен${N}"
+
+  local gmode="${GRAFANA_MODE:-path}"
+  local gurl="${GRAFANA_URL:-}"
+  local gdomain="${GRAFANA_DOMAIN:-}"
+  local SSL_CONF="/etc/nginx/sites-available/hipr-ssl"
+  local CERT_PATH="/etc/letsencrypt/live/${DOMAIN:-_}"
+
+  echo -e "\n  ${DIM}Режим: ${W}$gmode${N}  URL: ${W}${gurl:-не задан}${N}\n"
+
+  if [[ "$gmode" == "path" ]]; then
+    # Режим /grafana/ — вставляем location в hipr-ssl
+    if [[ ! -f "$SSL_CONF" ]]; then
+      echo -e "  ${R}❌ $SSL_CONF не найден — сначала получите TLS сертификат${N}"
+      pause; return
+    fi
+
+    if grep -q 'location /grafana/' "$SSL_CONF" 2>/dev/null; then
+      echo -e "  ${Y}⚠️  location /grafana/ уже есть${N}"
+      grep -A8 'location /grafana/' "$SSL_CONF" | sed 's/^/    /'
+      echo ""
+      read -rp "  Перезаписать? [y/N]: " ow
+      [[ "${ow,,}" != "y" ]] && { echo -e "\n  Отменено"; pause; return; }
+      # Удаляем старый блок через sed
+      sed -i '/# Grafana/,+8d' "$SSL_CONF" 2>/dev/null || true
+      sed -i '/location \/grafana\//,/^[[:space:]]*\}/d' "$SSL_CONF" 2>/dev/null || true
+    fi
+
+    # Записываем nginx блок через printf — никаких heredoc с {} внутри функции
+    local NGINX_BLOCK
+    NGINX_BLOCK=$(printf '\n    # Grafana dashboard\n    location /grafana/ {\n        proxy_pass         http://127.0.0.1:3000/;\n        proxy_set_header   Host $host;\n        proxy_set_header   X-Real-IP $remote_addr;\n        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header   X-Forwarded-Proto $scheme;\n    }\n')
+
+    # Вставляем перед последней строкой файла если это }
+    local last_line; last_line=$(tail -1 "$SSL_CONF")
+    if [[ "$last_line" == "}" ]]; then
+      head -n -1 "$SSL_CONF" > /tmp/hipr-ssl-gf.conf
+      printf '%s\n}\n' "$NGINX_BLOCK" >> /tmp/hipr-ssl-gf.conf
+      mv /tmp/hipr-ssl-gf.conf "$SSL_CONF"
+    else
+      printf '%s\n' "$NGINX_BLOCK" >> "$SSL_CONF"
+    fi
+    echo -e "  ${G}✅ location /grafana/ добавлен${N}"
+
+  else
+    # Режим поддомена
+    if [[ -z "$gdomain" ]]; then
+      echo -e "  ${R}❌ GRAFANA_DOMAIN не задан${N}"
+      read -rp "  Поддомен (напр. stat.${DOMAIN:-example.com}): " gdomain
+      [[ -z "$gdomain" ]] && { echo "  Отменено"; pause; return; }
+      sed -i "s|GRAFANA_DOMAIN=.*|GRAFANA_DOMAIN=\"$gdomain\"|" "$CONFIG_FILE" 2>/dev/null \
+        || echo "GRAFANA_DOMAIN=\"$gdomain\"" >> "$CONFIG_FILE"
+    fi
+
+    # Пишем конфиг поддомена через printf
+    printf 'server {\n    listen 127.0.0.1:8444 ssl http2;\n    server_name %s;\n\n    ssl_certificate     %s/fullchain.pem;\n    ssl_certificate_key %s/privkey.pem;\n    ssl_protocols       TLSv1.2 TLSv1.3;\n\n    location / {\n        proxy_pass         http://127.0.0.1:3000;\n        proxy_set_header   Host $host;\n        proxy_set_header   X-Real-IP $remote_addr;\n    }\n}\n' \
+      "$gdomain" "$CERT_PATH" "$CERT_PATH" \
+      > /etc/nginx/sites-available/hipr-grafana
+
+    ln -sf /etc/nginx/sites-available/hipr-grafana /etc/nginx/sites-enabled/
+
+    local stream_conf="/etc/nginx/snippets/hipr-stream.conf"
+    if [[ -f "$stream_conf" ]]; then
+      sed -i "/$gdomain/d" "$stream_conf"
+      sed -i "s/        default         127.0.0.1:8443;/        $gdomain   127.0.0.1:8444;\n        default         127.0.0.1:8443;/" "$stream_conf"
+    fi
+    echo -e "  ${G}✅ Конфиг поддомена $gdomain создан${N}"
+  fi
+
+  # ── Проверяем и перезагружаем nginx ─────────────────────────────────────
+  echo ""
+  if nginx -t 2>/tmp/hipr-nginx-gf.log; then
+    systemctl reload nginx
+    echo -e "  ${G}✅ nginx перезагружен${N}\n"
+    echo -e "  ${BOLD}Grafana доступна:${N}"
+    if [[ "$gmode" == "path" ]]; then
+      echo -e "  ${C}https://${DOMAIN}/grafana/${N}"
+    else
+      echo -e "  ${C}https://${gdomain}/${N}"
+    fi
+    local gpass; gpass=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+    [[ -n "$gpass" ]] && echo -e "  ${DIM}Логин: admin / $gpass${N}"
+  else
+    echo -e "  ${R}❌ nginx -t упал:${N}"
+    cat /tmp/hipr-nginx-gf.log | sed 's/^/    /'
+    echo -e "\n  ${DIM}Исправьте вручную: $SSL_CONF${N}"
+    echo -e "  ${DIM}Затем: nginx -t && systemctl reload nginx${N}"
+  fi
+  rm -f /tmp/hipr-nginx-gf.log
+  pause
 }
 
 _switch_mode() {
