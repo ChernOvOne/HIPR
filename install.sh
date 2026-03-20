@@ -11,6 +11,7 @@ set -uo pipefail
 VERSION="4.0"
 MTG_VER="2.2.0"
 DNSPROXY_VER="0.81.0"
+GRAFANA_VER="11.4.0"
 
 # ── Пути ──────────────────────────────────────────────────────────────────
 HIDE_DIR="/opt/hipr"
@@ -21,10 +22,16 @@ MTG_BIN="$HIDE_DIR/bin/mtg"
 DNSPROXY_BIN="/usr/local/bin/dnsproxy"
 REPO_RAW="https://raw.githubusercontent.com/ChernOvOne/HIPR/main"
 
-# ── Цвета ─────────────────────────────────────────────────────────────────
-R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
-B='\033[0;34m'; C='\033[0;36m'; W='\033[1;37m'
-N='\033[0m';    BOLD='\033[1m'; DIM='\033[2m'
+# ── Цвета — используем $'...' чтобы работало везде включая read -rp ───────
+R=$'\033[0;31m'
+G=$'\033[0;32m'
+Y=$'\033[1;33m'
+B=$'\033[0;34m'
+C=$'\033[0;36m'
+W=$'\033[1;37m'
+N=$'\033[0m'
+BOLD=$'\033[1m'
+DIM=$'\033[2m'
 
 step()      { echo -e "\n${C}┌─${N} ${BOLD}$*${N}"; }
 ok()        { echo -e "${C}│${N}  ${G}✓${N}  $*"; }
@@ -56,9 +63,9 @@ step "Проверка системы"
 
 ARCH=$(uname -m)
 case "$ARCH" in
-  x86_64)  MTG_ARCH="amd64"; DNS_ARCH="linux-amd64" ;;
-  aarch64) MTG_ARCH="arm64"; DNS_ARCH="linux-arm64" ;;
-  armv7l)  MTG_ARCH="arm-7"; DNS_ARCH="linux-arm-7" ;;
+  x86_64)  MTG_ARCH="amd64"; DNS_ARCH="linux-amd64"; GRAFANA_ARCH="amd64" ;;
+  aarch64) MTG_ARCH="arm64"; DNS_ARCH="linux-arm64"; GRAFANA_ARCH="arm64" ;;
+  armv7l)  MTG_ARCH="arm-7"; DNS_ARCH="linux-arm-7"; GRAFANA_ARCH="armv7" ;;
   *) err "Неподдерживаемая архитектура: $ARCH" ;;
 esac
 
@@ -99,15 +106,16 @@ if [[ -f "$CONFIG_FILE" || -f "$HIDE_BIN" ]]; then
   fi
 
   echo -e "\n  ${Y}🗑️  Удаляем старую установку...${N}"
-  systemctl stop hipr-mtg hipr-mtg@1 hipr-mtg@2 hipr-mtg@3 hipr-mtg@4 hipr-mtg@5 \
-    hipr-watchdog.timer dnsproxy 2>/dev/null || true
-  systemctl disable hipr-mtg hipr-mtg@{1..5} hipr-watchdog.timer \
-    hipr-watchdog dnsproxy 2>/dev/null || true
+  systemctl stop hipr-mtg hipr-mtg@0 hipr-mtg@1 hipr-mtg@2 hipr-mtg@3 hipr-mtg@4 \
+    hipr-watchdog.timer dnsproxy prometheus grafana-server 2>/dev/null || true
+  systemctl disable hipr-mtg "hipr-mtg@{0..4}" hipr-watchdog.timer \
+    hipr-watchdog dnsproxy prometheus grafana-server 2>/dev/null || true
   rm -f /etc/systemd/system/hipr-mtg.service
   rm -f /etc/systemd/system/hipr-mtg@.service
   rm -f /etc/systemd/system/hipr-watchdog.service
   rm -f /etc/systemd/system/hipr-watchdog.timer
   rm -f /etc/systemd/system/dnsproxy.service
+  rm -f /etc/systemd/system/prometheus.service
   systemctl daemon-reload
   rm -f /etc/nginx/sites-enabled/hipr-{http,ssl,fallback,grafana}
   rm -f /etc/nginx/sites-available/hipr-{http,ssl,fallback,grafana}
@@ -116,6 +124,7 @@ if [[ -f "$CONFIG_FILE" || -f "$HIDE_BIN" ]]; then
   sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf 2>/dev/null || true
   nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
   rm -rf /opt/hipr /var/www/hipr /usr/local/bin/hide
+  rm -f /usr/local/bin/prometheus /usr/local/bin/promtool
   crontab -l 2>/dev/null | grep -v 'hipr\|certbot' | crontab - 2>/dev/null || true
   killall -9 mtg 2>/dev/null || true
   echo -e "  ${G}✅ Очищено — начинаем установку заново${N}\n"
@@ -259,7 +268,7 @@ apt-get install -y -qq \
   curl wget jq bc python3 \
   net-tools netcat-openbsd dnsutils \
   qrencode xxd openssl \
-  fail2ban ufw unzip 2>/dev/null
+  fail2ban ufw unzip apt-transport-https software-properties-common gnupg 2>/dev/null
 ok "Пакеты установлены"
 
 # DNS фикс для российских VPS
@@ -276,29 +285,48 @@ done_step
 # ── BBR ───────────────────────────────────────────────────────────────────
 step "Оптимизация сети (BBR + sysctl)"
 
-# BBR congestion control
-if ! sysctl net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
-  if modprobe tcp_bbr 2>/dev/null; then
-    cat >> /etc/sysctl.d/99-hipr.conf << 'SYSCTL'
-# HIPR — сетевые оптимизации
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-SYSCTL
-    ok "BBR включён"
+# Определяем версию ядра и выбираем лучший доступный алгоритм
+# BBRv3 вошёл в ядро начиная с 6.3 (в нём bbr обновлён до v3 без нового имени модуля)
+# BBRv2 — только в патченых ядрах CachyOS/XanMod, в стандартных Ubuntu/Debian недоступен
+# BBRv1 — доступен начиная с ядра 4.9
+KERNEL_VER=$(uname -r | grep -oP '^\d+\.\d+' | head -1)
+KERNEL_MAJOR=$(echo "$KERNEL_VER" | cut -d. -f1)
+KERNEL_MINOR=$(echo "$KERNEL_VER" | cut -d. -f2)
+BBR_LABEL=""
+
+# Проверяем, какие алгоритмы фактически доступны в ядре
+AVAIL_CC=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "")
+
+if echo "$AVAIL_CC" | grep -qw "bbr"; then
+  # BBR доступен — определяем какой именно по версии ядра
+  if (( KERNEL_MAJOR > 6 )) || (( KERNEL_MAJOR == 6 && KERNEL_MINOR >= 3 )); then
+    BBR_LABEL="BBRv3 (ядро $KERNEL_VER)"
+  elif (( KERNEL_MAJOR > 5 )) || (( KERNEL_MAJOR == 5 && KERNEL_MINOR >= 18 )); then
+    BBR_LABEL="BBR (ядро $KERNEL_VER, ≈ v2/v3 черновик)"
   else
-    info "BBR недоступен на этом ядре"
+    BBR_LABEL="BBRv1 (ядро $KERNEL_VER)"
   fi
+  modprobe tcp_bbr 2>/dev/null || true
+  ok "Алгоритм: $BBR_LABEL"
 else
-  ok "BBR уже включён"
+  # BBR не скомпилирован — пробуем загрузить модуль
+  if modprobe tcp_bbr 2>/dev/null; then
+    BBR_LABEL="BBRv1 (ядро $KERNEL_VER, загружен модуль)"
+    ok "Алгоритм: $BBR_LABEL"
+  else
+    BBR_LABEL="cubic"
+    warn "BBR недоступен на ядре $KERNEL_VER — используем CUBIC"
+    info "Для BBRv3: обновитесь до Ubuntu 24.04+ с ядром 6.3+"
+  fi
 fi
 
-# Тюнинг под нагрузку 100+ пользователей
-cat > /etc/sysctl.d/99-hipr.conf << 'SYSCTL'
+cat > /etc/sysctl.d/99-hipr.conf << SYSCTL
 # HIPR — сетевые оптимизации для 100+ пользователей
+# Ядро: $KERNEL_VER | Алгоритм: $BBR_LABEL
 
-# BBR
+# Управление перегрузкой
 net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
+net.ipv4.tcp_congestion_control = $( [[ "$BBR_LABEL" != "cubic" ]] && echo "bbr" || echo "cubic" )
 
 # Буферы
 net.core.rmem_max = 16777216
@@ -325,7 +353,6 @@ SYSCTL
 
 sysctl -p /etc/sysctl.d/99-hipr.conf > /dev/null 2>&1 || true
 
-# Лимиты для systemd сервисов
 cat > /etc/security/limits.d/hipr.conf << 'LIMITS'
 * soft nofile 1000000
 * hard nofile 1000000
@@ -418,8 +445,6 @@ else
   ok "hide скачан"
 fi
 chmod +x "$HIDE_BIN"
-
-# Темы встроены ниже через heredoc
 done_step
 
 # ── Установка mtg ─────────────────────────────────────────────────────────
@@ -460,10 +485,10 @@ for i in "${!SNI_DOMAINS[@]}"; do
   local_prom=$((BASE_PROM + i))
   local_secret=$("$MTG_BIN" generate-secret --hex "$local_sni" 2>/dev/null | tr -d '\n')
 
-  # Fallback генерация
+  # Fallback генерация если mtg generate-secret не сработал
   if [[ -z "$local_secret" ]]; then
-    local rh; rh=$(openssl rand -hex 16)
-    local dh; dh=$(echo -n "$local_sni" | xxd -p | tr -d '\n')
+    rh=$(openssl rand -hex 16)
+    dh=$(echo -n "$local_sni" | xxd -p | tr -d '\n')
     local_secret="ee${rh}${dh}"
   fi
 
@@ -516,7 +541,6 @@ done_step
 step "Systemd сервисы mtg"
 
 if [[ "$MODE" == "single" ]]; then
-  # Один сервис для обычного режима
   cat > /etc/systemd/system/hipr-mtg.service << EOF
 [Unit]
 Description=HIPR mtg MTProto Proxy (SNI: ${SNI_DOMAINS[0]})
@@ -545,7 +569,7 @@ EOF
   ok "Сервис hipr-mtg создан"
 
 else
-  # Шаблонный сервис для Multi-fronting
+  # Шаблонный сервис для Multi-fronting — %i это индекс (0,1,2...)
   cat > /etc/systemd/system/hipr-mtg@.service << EOF
 [Unit]
 Description=HIPR mtg MTProto Proxy инстанс %i
@@ -581,15 +605,17 @@ if [[ "$MODE" == "single" ]]; then
   systemctl enable hipr-mtg 2>/dev/null
   systemctl start hipr-mtg
   sleep 2
-  systemctl is-active --quiet hipr-mtg && ok "hipr-mtg запущен" \
+  systemctl is-active --quiet hipr-mtg \
+    && ok "hipr-mtg запущен" \
     || warn "hipr-mtg не запустился — проверьте: journalctl -u hipr-mtg -n 20"
 else
   for i in "${!SNI_DOMAINS[@]}"; do
     systemctl enable "hipr-mtg@${i}" 2>/dev/null
     systemctl start "hipr-mtg@${i}"
     sleep 1
-    systemctl is-active --quiet "hipr-mtg@${i}" && ok "hipr-mtg@${i} запущен (${SNI_DOMAINS[$i]})" \
-      || warn "hipr-mtg@${i} не запустился"
+    systemctl is-active --quiet "hipr-mtg@${i}" \
+      && ok "hipr-mtg@${i} запущен (${SNI_DOMAINS[$i]})" \
+      || warn "hipr-mtg@${i} не запустился — journalctl -u hipr-mtg@${i} -n 20"
   done
 fi
 
@@ -598,7 +624,6 @@ done_step
 # ── Сохраняем конфиг ──────────────────────────────────────────────────────
 step "Сохранение конфигурации"
 
-# Сериализуем массивы в строки для config.env
 SNI_DOMAINS_STR=$(IFS='|'; echo "${SNI_DOMAINS[*]}")
 MTG_SECRETS_STR=$(IFS='|'; echo "${MTG_SECRETS[*]}")
 MTG_PORTS_STR=$(IFS='|'; echo "${MTG_PORTS[*]}")
@@ -636,7 +661,6 @@ done_step
 step "Разворачиваем темы"
 
 mkdir -p "$HIDE_DIR/themes"/{blog,freelancer,coming-soon}
-
 
 cat > "$HIDE_DIR/themes/blog/theme.json" << 'TJSON'
 {"name":"blog","description":"Блог разработчика DevNotes","author":"HIPR","version":"1.0","preview":"Технический блог: Linux, Go, DevOps","pages":["index.html","about.html"]}
@@ -747,8 +771,8 @@ footer{text-align:center;padding:2rem;color:#aaa;font-size:.78rem;border-top:1px
 </div></main>
 <footer>© 2024 DevNotes · Сделано с кофе и vim</footer>
 </body></html>
-
 BLOGEOF
+
 cat > "$HIDE_DIR/themes/blog/about.html" << 'BLOGABOUTEOF'
 <!DOCTYPE html>
 <html lang="ru">
@@ -810,7 +834,6 @@ footer{text-align:center;padding:2rem;color:#aaa;font-size:.78rem;border-top:1px
 </main>
 <footer>© 2024 DevNotes · Сделано с кофе и vim</footer>
 </body></html>
-
 BLOGABOUTEOF
 ok "Тема: blog"
 
@@ -882,7 +905,6 @@ footer{text-align:center;padding:1.5rem;background:#111;color:#555;font-size:.78
     </nav>
   </div>
 </header>
-
 <div class="hero">
   <div class="hero-inner">
     <div class="badge">✦ Доступен для новых проектов</div>
@@ -894,64 +916,28 @@ footer{text-align:center;padding:1.5rem;background:#111;color:#555;font-size:.78
     </div>
   </div>
 </div>
-
 <section id="services" style="background:#fff">
   <div class="sec-inner">
     <div class="sec-title">Чем могу помочь</div>
     <div class="sec-sub">Полный цикл разработки от идеи до продакшна</div>
     <div class="cards">
-      <div class="card">
-        <div class="card-icon">🌐</div>
-        <h3>Веб-приложения</h3>
-        <p>SPA, лендинги, административные панели, корпоративные сайты</p>
-        <div class="stack"><span class="tag">React</span><span class="tag">Next.js</span><span class="tag">TypeScript</span></div>
-      </div>
-      <div class="card">
-        <div class="card-icon">📱</div>
-        <h3>Мобильные приложения</h3>
-        <p>Кроссплатформенные приложения под iOS и Android</p>
-        <div class="stack"><span class="tag">Flutter</span><span class="tag">Dart</span><span class="tag">Firebase</span></div>
-      </div>
-      <div class="card">
-        <div class="card-icon">⚙️</div>
-        <h3>Бэкенд и API</h3>
-        <p>REST/GraphQL API, микросервисы, интеграции с внешними сервисами</p>
-        <div class="stack"><span class="tag">Node.js</span><span class="tag">PostgreSQL</span><span class="tag">Docker</span></div>
-      </div>
+      <div class="card"><div class="card-icon">🌐</div><h3>Веб-приложения</h3><p>SPA, лендинги, административные панели, корпоративные сайты</p><div class="stack"><span class="tag">React</span><span class="tag">Next.js</span><span class="tag">TypeScript</span></div></div>
+      <div class="card"><div class="card-icon">📱</div><h3>Мобильные приложения</h3><p>Кроссплатформенные приложения под iOS и Android</p><div class="stack"><span class="tag">Flutter</span><span class="tag">Dart</span><span class="tag">Firebase</span></div></div>
+      <div class="card"><div class="card-icon">⚙️</div><h3>Бэкенд и API</h3><p>REST/GraphQL API, микросервисы, интеграции с внешними сервисами</p><div class="stack"><span class="tag">Node.js</span><span class="tag">PostgreSQL</span><span class="tag">Docker</span></div></div>
     </div>
   </div>
 </section>
-
 <section id="projects">
   <div class="sec-inner">
     <div class="sec-title">Последние проекты</div>
     <div class="sec-sub">Некоторые из недавних работ</div>
     <div class="projects">
-      <div class="proj">
-        <div class="proj-img blue">📊</div>
-        <div class="proj-body">
-          <h3>Аналитическая платформа</h3>
-          <p>Дашборд для мониторинга бизнес-метрик в реальном времени. React + D3.js + WebSocket</p>
-        </div>
-      </div>
-      <div class="proj">
-        <div class="proj-img green">🛒</div>
-        <div class="proj-body">
-          <h3>Мобильный маркетплейс</h3>
-          <p>Flutter-приложение с каталогом, корзиной и оплатой. 10k+ установок</p>
-        </div>
-      </div>
-      <div class="proj">
-        <div class="proj-img orange">💬</div>
-        <div class="proj-body">
-          <h3>CRM для агентства</h3>
-          <p>Система управления клиентами и сделками. Node.js + PostgreSQL + React</p>
-        </div>
-      </div>
+      <div class="proj"><div class="proj-img blue">📊</div><div class="proj-body"><h3>Аналитическая платформа</h3><p>Дашборд для мониторинга бизнес-метрик в реальном времени. React + D3.js + WebSocket</p></div></div>
+      <div class="proj"><div class="proj-img green">🛒</div><div class="proj-body"><h3>Мобильный маркетплейс</h3><p>Flutter-приложение с каталогом, корзиной и оплатой. 10k+ установок</p></div></div>
+      <div class="proj"><div class="proj-img orange">💬</div><div class="proj-body"><h3>CRM для агентства</h3><p>Система управления клиентами и сделками. Node.js + PostgreSQL + React</p></div></div>
     </div>
   </div>
 </section>
-
 <section id="contact" class="contact-bg">
   <div class="sec-inner">
     <div class="sec-title">Свяжитесь со мной</div>
@@ -967,10 +953,8 @@ footer{text-align:center;padding:1.5rem;background:#111;color:#555;font-size:.78
     </div>
   </div>
 </section>
-
 <footer>© 2024 alexei.dev · Все права защищены</footer>
 </body></html>
-
 FREELANCEREOF
 ok "Тема: freelancer"
 
@@ -988,112 +972,53 @@ cat > "$HIDE_DIR/themes/coming-soon/index.html" << 'COMINGEOF'
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  background:#0f0f1a;
-  color:#fff;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  justify-content:center;
-  min-height:100vh;
-  text-align:center;
-  padding:2rem;
-  overflow:hidden;
-}
-.bg{
-  position:fixed;inset:0;z-index:0;
-  background:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,.15) 0%,transparent 60%),
-             radial-gradient(ellipse at 80% 20%,rgba(168,85,247,.12) 0%,transparent 60%),
-             radial-gradient(ellipse at 60% 80%,rgba(59,130,246,.1) 0%,transparent 60%);
-}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f1a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:2rem;overflow:hidden}
+.bg{position:fixed;inset:0;z-index:0;background:radial-gradient(ellipse at 20% 50%,rgba(99,102,241,.15) 0%,transparent 60%),radial-gradient(ellipse at 80% 20%,rgba(168,85,247,.12) 0%,transparent 60%),radial-gradient(ellipse at 60% 80%,rgba(59,130,246,.1) 0%,transparent 60%)}
 .content{position:relative;z-index:1;max-width:560px;width:100%}
-.logo{
-  display:inline-flex;align-items:center;gap:.6rem;
-  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
-  padding:.5rem 1.25rem;border-radius:50px;margin-bottom:3rem;
-  font-size:.85rem;font-weight:600;letter-spacing:.5px;color:rgba(255,255,255,.8)
-}
+.logo{display:inline-flex;align-items:center;gap:.6rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);padding:.5rem 1.25rem;border-radius:50px;margin-bottom:3rem;font-size:.85rem;font-weight:600;letter-spacing:.5px;color:rgba(255,255,255,.8)}
 .logo-dot{width:8px;height:8px;border-radius:50%;background:#6366f1;animation:pulse 2s infinite}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
-h1{
-  font-size:clamp(2rem,5vw,3.25rem);font-weight:800;
-  line-height:1.15;margin-bottom:1.25rem;
-  background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,.7) 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text
-}
+h1{font-size:clamp(2rem,5vw,3.25rem);font-weight:800;line-height:1.15;margin-bottom:1.25rem;background:linear-gradient(135deg,#fff 0%,rgba(255,255,255,.7) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .sub{color:rgba(255,255,255,.5);font-size:1.05rem;margin-bottom:3rem;line-height:1.6}
 .counter{display:flex;justify-content:center;gap:1.5rem;margin-bottom:3rem;flex-wrap:wrap}
-.count-item{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);
-  border-radius:12px;padding:1.25rem 1.5rem;min-width:80px}
+.count-item{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:1.25rem 1.5rem;min-width:80px}
 .count-num{font-size:2rem;font-weight:800;line-height:1;color:#a5b4fc}
 .count-label{font-size:.7rem;color:rgba(255,255,255,.4);margin-top:.3rem;text-transform:uppercase;letter-spacing:.5px}
 .form{display:flex;gap:.75rem;max-width:420px;margin:0 auto 1.5rem;flex-wrap:wrap;justify-content:center}
-.input{
-  flex:1;min-width:200px;padding:.8rem 1.25rem;border-radius:10px;
-  border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);
-  color:#fff;font-size:.9rem;outline:none;font-family:inherit
-}
+.input{flex:1;min-width:200px;padding:.8rem 1.25rem;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.07);color:#fff;font-size:.9rem;outline:none;font-family:inherit}
 .input::placeholder{color:rgba(255,255,255,.35)}
 .input:focus{border-color:rgba(99,102,241,.6);background:rgba(255,255,255,.1)}
-.btn{
-  padding:.8rem 1.75rem;border-radius:10px;border:none;
-  background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;
-  font-weight:700;font-size:.9rem;cursor:pointer;white-space:nowrap;font-family:inherit
-}
+.btn{padding:.8rem 1.75rem;border-radius:10px;border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;font-weight:700;font-size:.9rem;cursor:pointer;white-space:nowrap;font-family:inherit}
 .btn:hover{opacity:.9}
 .hint{color:rgba(255,255,255,.3);font-size:.78rem}
 .socials{display:flex;gap:1rem;justify-content:center;margin-top:3rem}
-.soc{
-  width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;
-  background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);
-  color:rgba(255,255,255,.5);font-size:.9rem;transition:.2s
-}
+.soc{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.5);font-size:.9rem;transition:.2s}
 .soc:hover{background:rgba(255,255,255,.12);color:#fff}
 </style>
 </head>
 <body>
 <div class="bg"></div>
 <div class="content">
-  <div class="logo">
-    <span class="logo-dot"></span>
-    В разработке
-  </div>
+  <div class="logo"><span class="logo-dot"></span>В разработке</div>
   <h1>Что-то крутое скоро появится</h1>
   <p class="sub">Мы работаем над чем-то особенным.<br>Подпишитесь — пришлём письмо в день запуска.</p>
-
   <div class="counter">
-    <div class="count-item">
-      <div class="count-num" id="days">14</div>
-      <div class="count-label">Дней</div>
-    </div>
-    <div class="count-item">
-      <div class="count-num" id="hours">08</div>
-      <div class="count-label">Часов</div>
-    </div>
-    <div class="count-item">
-      <div class="count-num" id="mins">23</div>
-      <div class="count-label">Минут</div>
-    </div>
-    <div class="count-item">
-      <div class="count-num" id="secs">41</div>
-      <div class="count-label">Секунд</div>
-    </div>
+    <div class="count-item"><div class="count-num" id="days">14</div><div class="count-label">Дней</div></div>
+    <div class="count-item"><div class="count-num" id="hours">08</div><div class="count-label">Часов</div></div>
+    <div class="count-item"><div class="count-num" id="mins">23</div><div class="count-label">Минут</div></div>
+    <div class="count-item"><div class="count-num" id="secs">41</div><div class="count-label">Секунд</div></div>
   </div>
-
   <div class="form">
     <input class="input" type="email" placeholder="Ваш email">
     <button class="btn">Уведомить меня</button>
   </div>
   <p class="hint">Никакого спама. Только одно письмо в день запуска.</p>
-
   <div class="socials">
     <a href="#" class="soc">TG</a>
     <a href="#" class="soc">GH</a>
     <a href="#" class="soc">TW</a>
   </div>
 </div>
-
 <script>
   const launch = new Date(Date.now() + 14*24*60*60*1000);
   function tick(){
@@ -1107,7 +1032,6 @@ h1{
   tick(); setInterval(tick,1000);
 </script>
 </body></html>
-
 COMINGEOF
 ok "Тема: coming-soon"
 
@@ -1124,7 +1048,6 @@ done_step
 # ── nginx ─────────────────────────────────────────────────────────────────
 step "Настройка nginx"
 
-# Чистим остатки
 rm -f /etc/nginx/sites-enabled/default
 rm -f /etc/nginx/sites-enabled/hipr-{ssl,fallback}
 rm -f /etc/nginx/sites-available/hipr-{ssl,fallback}
@@ -1133,7 +1056,6 @@ rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
 sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf
 mkdir -p /var/www/certbot /etc/nginx/snippets
 
-# HTTP конфиг
 cat > /etc/nginx/sites-available/hipr-http << 'EOF'
 server {
     listen 80;
@@ -1179,7 +1101,6 @@ read -rp "  DNS настроен? [Y/n]: " DNS_OK
 CERT_OK=false
 CERT_DOMAINS="-d $DOMAIN"
 
-# Для Grafana на поддомене добавляем его в сертификат
 if [[ "${GRAFANA_MODE:-}" == "subdomain" ]]; then
   info "Домен Grafana:  ${W}$GRAFANA_DOMAIN${N}"
   info "A-запись $GRAFANA_DOMAIN → $MY_IP тоже нужна"
@@ -1198,8 +1119,6 @@ if [[ "${DNS_OK,,}" != "n" ]]; then
     CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
     ok "Сертификат получен"
 
-    # HTTPS сайт-заглушка
-    # log_format должен быть в http{} — пишем в отдельный конфиг
     cat > /etc/nginx/conf.d/hipr-logformat.conf << 'EOF'
 log_format hipr_detailed '$remote_addr - $remote_user [$time_local] '
                          '"$request" $status $body_bytes_sent '
@@ -1242,14 +1161,12 @@ EOF
 
     ln -sf /etc/nginx/sites-available/hipr-ssl /etc/nginx/sites-enabled/
 
-    # nginx stream — SNI роутинг
-    # Строим карту для всех SNI доменов
+    # Строим nginx stream SNI карту
     STREAM_MAP=""
     for i in "${!SNI_DOMAINS[@]}"; do
       STREAM_MAP="${STREAM_MAP}        ${SNI_DOMAINS[$i]}   127.0.0.1:${MTG_PORTS[$i]};\n"
     done
 
-    # Убеждаемся что libnginx-mod-stream установлен
     dpkg -l libnginx-mod-stream 2>/dev/null | grep -q '^ii' || \
       apt-get install -y -qq libnginx-mod-stream 2>/dev/null
 
@@ -1283,7 +1200,6 @@ EOF
       cat /tmp/hipr-nginx-test.log >&2
     fi
 
-    # Авто-обновление сертификата
     (crontab -l 2>/dev/null | grep -v certbot
      echo "0 3 * * * certbot renew --quiet --deploy-hook 'systemctl reload nginx'") | crontab -
     ok "Авто-обновление сертификата (cron 3:00)"
@@ -1301,42 +1217,49 @@ done_step
 if [[ "$INSTALL_GRAFANA" == "true" ]]; then
   step "Установка Prometheus + Grafana"
 
-  # Prometheus
+  # ── Prometheus ──────────────────────────────────────────────────────────
+  # Определяем архитектуру для Prometheus (совпадает с MTG_ARCH)
+  PROM_ARCH="${MTG_ARCH}"
+
   PROM_VER=$(curl -sf --max-time 10 \
     "https://api.github.com/repos/prometheus/prometheus/releases/latest" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" 2>/dev/null || echo "2.51.0")
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" \
+    2>/dev/null || echo "2.51.0")
 
-  info "Prometheus v$PROM_VER..."
-  wget -q "https://github.com/prometheus/prometheus/releases/download/v${PROM_VER}/prometheus-${PROM_VER}.linux-amd64.tar.gz" \
-    -O /tmp/prometheus.tar.gz 2>/dev/null || warn "Не удалось скачать Prometheus"
+  info "Prometheus v$PROM_VER ($PROM_ARCH)..."
+  PROM_URL="https://github.com/prometheus/prometheus/releases/download/v${PROM_VER}/prometheus-${PROM_VER}.linux-${PROM_ARCH}.tar.gz"
 
-  if [[ -f /tmp/prometheus.tar.gz ]]; then
+  if wget -q "$PROM_URL" -O /tmp/prometheus.tar.gz 2>/dev/null; then
     useradd --system --no-create-home --shell /bin/false prometheus 2>/dev/null || true
     mkdir -p /etc/prometheus /var/lib/prometheus
-    tar -xzf /tmp/prometheus.tar.gz -C /tmp/
-    cp /tmp/prometheus-${PROM_VER}.linux-amd64/{prometheus,promtool} /usr/local/bin/
-    rm -f /tmp/prometheus.tar.gz
 
-    # Конфиг Prometheus — собираем с всех mtg инстансов
-    PROM_TARGETS=""
-    for port in "${MTG_PROM_PORTS[@]}"; do
-      PROM_TARGETS="${PROM_TARGETS}      - '127.0.0.1:${port}'\n"
-    done
+    mkdir -p /tmp/prometheus-extract
+    tar -xzf /tmp/prometheus.tar.gz -C /tmp/prometheus-extract/
+    # Ищем бинарники независимо от имени папки внутри архива
+    find /tmp/prometheus-extract -name "prometheus" -type f | head -1 | \
+      xargs -I{} cp {} /usr/local/bin/prometheus
+    find /tmp/prometheus-extract -name "promtool" -type f | head -1 | \
+      xargs -I{} cp {} /usr/local/bin/promtool
+    chmod +x /usr/local/bin/prometheus /usr/local/bin/promtool
+    rm -rf /tmp/prometheus.tar.gz /tmp/prometheus-extract
 
-    cat > /etc/prometheus/prometheus.yml << EOF
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-
-scrape_configs:
-  - job_name: 'hipr_mtg'
-    static_configs:
-      - targets:
-$(echo -e "$PROM_TARGETS")
-    relabel_configs:
-      - source_labels: [__address__]
-        target_label: instance
-EOF
+    # Конфиг Prometheus — строим YAML корректно без сложных heredoc-подстановок
+    {
+      echo "global:"
+      echo "  scrape_interval: 15s"
+      echo "  evaluation_interval: 15s"
+      echo ""
+      echo "scrape_configs:"
+      echo "  - job_name: 'hipr_mtg'"
+      echo "    static_configs:"
+      echo "      - targets:"
+      for port in "${MTG_PROM_PORTS[@]}"; do
+        echo "          - '127.0.0.1:${port}'"
+      done
+      echo "    relabel_configs:"
+      echo "      - source_labels: [__address__]"
+      echo "        target_label: instance"
+    } > /etc/prometheus/prometheus.yml
 
     cat > /etc/systemd/system/prometheus.service << 'EOF'
 [Unit]
@@ -1351,6 +1274,7 @@ ExecStart=/usr/local/bin/prometheus \
   --storage.tsdb.retention.time=30d \
   --web.listen-address=127.0.0.1:9090
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -1360,27 +1284,52 @@ EOF
     systemctl daemon-reload
     systemctl enable prometheus 2>/dev/null
     systemctl start prometheus
-    sleep 2
-    systemctl is-active --quiet prometheus && ok "Prometheus запущен" || warn "Prometheus не запустился"
+    sleep 3
+    systemctl is-active --quiet prometheus \
+      && ok "Prometheus запущен (127.0.0.1:9090)" \
+      || warn "Prometheus не запустился — journalctl -u prometheus -n 20"
+  else
+    warn "Не удалось скачать Prometheus — пропускаем"
   fi
 
-  # Grafana
-  info "Grafana..."
-  apt-get install -y -qq apt-transport-https software-properties-common 2>/dev/null
-  mkdir -p /etc/apt/keyrings
-  wget -q -O /tmp/grafana.gpg https://apt.grafana.com/gpg.key 2>/dev/null \
-    || curl -fsSL https://apt.grafana.com/gpg.key -o /tmp/grafana.gpg 2>/dev/null
-  gpg --dearmor < /tmp/grafana.gpg > /etc/apt/keyrings/grafana.gpg 2>/dev/null
-  echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
-    > /etc/apt/sources.list.d/grafana.list
-  apt-get update -qq 2>/dev/null
-  apt-get install -y grafana 2>/dev/null
+  # ── Grafana ─────────────────────────────────────────────────────────────
+  info "Grafana — пробуем установить..."
+  GRAFANA_OK=false
 
-  # Проверяем что grafana реально установилась
-  if [[ ! -f /etc/grafana/grafana.ini ]]; then
+  # Метод 1: APT-репозиторий Grafana (может быть заблокирован с РФ-IP)
+  info "Метод 1: apt.grafana.com..."
+  mkdir -p /etc/apt/keyrings
+  if curl -fsSL --max-time 15 https://apt.grafana.com/gpg.key \
+       -o /tmp/grafana.gpg 2>/dev/null; then
+    gpg --dearmor < /tmp/grafana.gpg > /etc/apt/keyrings/grafana.gpg 2>/dev/null && \
+    echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" \
+      > /etc/apt/sources.list.d/grafana.list && \
+    apt-get update -qq 2>/dev/null && \
+    apt-get install -y grafana 2>/dev/null && \
+    GRAFANA_OK=true
+  fi
+
+  # Метод 2: Скачать .deb напрямую с GitHub Releases (не заблокирован)
+  if [[ "$GRAFANA_OK" == "false" ]]; then
+    warn "APT-репозиторий недоступен (403 РФ-IP?) — пробуем GitHub Releases..."
+    info "Метод 2: github.com/grafana/grafana/releases..."
+    GRAFANA_DEB_URL="https://github.com/grafana/grafana/releases/download/v${GRAFANA_VER}/grafana_${GRAFANA_VER}_${GRAFANA_ARCH}.deb"
+    if wget -q --show-progress "$GRAFANA_DEB_URL" -O /tmp/grafana.deb 2>/dev/null; then
+      dpkg -i /tmp/grafana.deb 2>/dev/null && GRAFANA_OK=true
+      apt-get install -f -y -qq 2>/dev/null  # подтянуть зависимости если нужно
+      rm -f /tmp/grafana.deb
+    else
+      warn "Не удалось скачать Grafana с GitHub"
+    fi
+  fi
+
+  if [[ "$GRAFANA_OK" == "false" || ! -f /etc/grafana/grafana.ini ]]; then
     warn "Grafana не установилась — пропускаем"
     INSTALL_GRAFANA=false
+    sed -i 's/INSTALL_GRAFANA=.*/INSTALL_GRAFANA="false"/' "$CONFIG_FILE"
   else
+    ok "Grafana установлена"
+
     # Генерируем пароль
     GRAFANA_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)
     GRAFANA_PASS="${GRAFANA_PASS}1!"
@@ -1410,15 +1359,13 @@ EOF
     systemctl start grafana-server
     sleep 3
     systemctl is-active --quiet grafana-server \
-      && ok "Grafana запущена" \
-      || warn "Grafana не запустилась — проверьте: journalctl -u grafana-server -n 20"
-  fi
+      && ok "Grafana запущена (127.0.0.1:3000)" \
+      || warn "Grafana не запустилась — journalctl -u grafana-server -n 20"
 
-  # nginx для Grafana
-  if [[ "$CERT_OK" == "true" ]]; then
-    if [[ "$GRAFANA_MODE" == "path" ]]; then
-      # Добавляем /grafana/ в существующий SSL конфиг
-      cat >> /etc/nginx/sites-available/hipr-ssl << 'EOF'
+    # nginx для Grafana
+    if [[ "$CERT_OK" == "true" ]]; then
+      if [[ "$GRAFANA_MODE" == "path" ]]; then
+        cat >> /etc/nginx/sites-available/hipr-ssl << 'GEOF'
 
 # Grafana дашборд
 location /grafana/ {
@@ -1427,11 +1374,10 @@ location /grafana/ {
     proxy_set_header X-Real-IP $remote_addr;
     rewrite ^/grafana/(.*) /$1 break;
 }
-EOF
-    else
-      # Отдельный vhost для поддомена
-      GRAFANA_CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
-      cat > /etc/nginx/sites-available/hipr-grafana << EOF
+GEOF
+      else
+        GRAFANA_CERT_PATH="/etc/letsencrypt/live/$DOMAIN"
+        cat > /etc/nginx/sites-available/hipr-grafana << EOF
 server {
     listen 127.0.0.1:8444 ssl http2;
     server_name $GRAFANA_DOMAIN;
@@ -1447,21 +1393,21 @@ server {
     }
 }
 EOF
-      ln -sf /etc/nginx/sites-available/hipr-grafana /etc/nginx/sites-enabled/
+        ln -sf /etc/nginx/sites-available/hipr-grafana /etc/nginx/sites-enabled/
 
-      # Добавляем поддомен в SNI карту
-      sed -i "/$GRAFANA_DOMAIN/d" /etc/nginx/snippets/hipr-stream.conf
-      sed -i "s/        default         127.0.0.1:8443;/        $GRAFANA_DOMAIN   127.0.0.1:8444;\n        default         127.0.0.1:8443;/" \
-        /etc/nginx/snippets/hipr-stream.conf
+        sed -i "/$GRAFANA_DOMAIN/d" /etc/nginx/snippets/hipr-stream.conf
+        sed -i "s/        default         127.0.0.1:8443;/        $GRAFANA_DOMAIN   127.0.0.1:8444;\n        default         127.0.0.1:8443;/" \
+          /etc/nginx/snippets/hipr-stream.conf
+      fi
+
+      nginx -t 2>/dev/null && systemctl reload nginx
+      ok "nginx настроен для Grafana"
     fi
 
-    nginx -t 2>/dev/null && systemctl reload nginx
-    ok "nginx настроен для Grafana"
+    # Сохраняем пароль в конфиг
+    echo "GRAFANA_PASS=\"$GRAFANA_PASS\"" >> "$CONFIG_FILE"
+    ok "Grafana пароль: $GRAFANA_PASS"
   fi
-
-  # Сохраняем пароль
-  echo "GRAFANA_PASS=\"$GRAFANA_PASS\"" >> "$CONFIG_FILE"
-  ok "Grafana пароль: $GRAFANA_PASS"
   done_step
 fi
 
@@ -1549,11 +1495,9 @@ NGINX_LOG="/opt/hipr/logs/nginx-access.log"
 PROBE_LOG="/opt/hipr/logs/probing.log"
 
 if [[ -f "$NGINX_LOG" ]]; then
-  # Ищем подозрительные паттерны за последние 5 минут
   RECENT=$(awk -v d="$(date -d '5 minutes ago' '+%d/%b/%Y:%H:%M' 2>/dev/null || date -v-5M '+%d/%b/%Y:%H:%M' 2>/dev/null)" \
     '$0 > d' "$NGINX_LOG" 2>/dev/null | tail -200)
 
-  # Много запросов с одного IP (> 20 за 5 мин)
   SUSPICIOUS=$(echo "$RECENT" | awk '{print $1}' | sort | uniq -c | sort -rn | \
     awk '$1 > 20 {print $1, $2}' 2>/dev/null)
 
@@ -1563,7 +1507,6 @@ if [[ -f "$NGINX_LOG" ]]; then
     notify "🔍 Возможный active probing: $SUSPICIOUS"
   fi
 
-  # Replay атаки из Prometheus
   PROM_PORTS_LIST="${MTG_PROM_PORTS:-3129}"
   IFS='|' read -ra PPORTS <<< "$PROM_PORTS_LIST"
   for port in "${PPORTS[@]}"; do
@@ -1579,11 +1522,10 @@ WATCHDOG
 
 chmod +x "$HIDE_DIR/bin/watchdog.sh"
 
-# Systemd timer
 cat > /etc/systemd/system/hipr-watchdog.service << EOF
 [Unit]
 Description=HIPR Watchdog
-After=hipr-mtg.service
+After=network.target
 
 [Service]
 Type=oneshot
@@ -1621,7 +1563,6 @@ CONFIG="/opt/hipr/config.env"
 [[ -f "$CONFIG" ]] && source "$CONFIG"
 [[ -z "${BOT_TOKEN:-}" || -z "${BOT_CHAT_ID:-}" ]] && exit 0
 
-# Собираем метрики со всех инстансов
 IFS='|' read -ra PPORTS <<< "${MTG_PROM_PORTS:-3129}"
 IFS='|' read -ra SNIS   <<< "${SNI_DOMAINS:-microsoft.com}"
 
@@ -1643,7 +1584,7 @@ for i in "${!PPORTS[@]}"; do
   TOTAL_TG=$((TOTAL_TG + ${tg:-0}))
   TOTAL_BYTES=$((TOTAL_BYTES + ${bytes:-0}))
   TOTAL_REPLAYS=$((TOTAL_REPLAYS + ${replays:-0}))
-  INST_LINES="${INST_LINES}  • ${sni}: ${active:-0} акт / $(echo "$bytes" | \
+  INST_LINES="${INST_LINES}  • ${sni}: ${active:-0} акт / $(echo "${bytes:-0}" | \
     python3 -c 'import sys; b=int(sys.stdin.read().strip() or 0); print(f"{b/1048576:.1f}MB")' 2>/dev/null || echo "—")\n"
 done
 
@@ -1678,7 +1619,6 @@ REPORT
 
   chmod +x "$HIDE_DIR/bin/daily-report.sh"
 
-  # Cron в 20:00 МСК (17:00 UTC)
   (crontab -l 2>/dev/null | grep -v 'daily-report'
    echo "0 17 * * * $HIDE_DIR/bin/daily-report.sh") | crontab -
 
@@ -1707,7 +1647,6 @@ ufw default allow outgoing > /dev/null 2>&1
 ufw allow ssh    > /dev/null 2>&1
 ufw allow 80/tcp  > /dev/null 2>&1
 ufw allow 443/tcp > /dev/null 2>&1
-[[ "$INSTALL_GRAFANA" == "true" ]] && ufw allow 3000/tcp > /dev/null 2>&1 || true
 ufw --force enable > /dev/null 2>&1
 ok "ufw настроен"
 done_step
@@ -1745,26 +1684,31 @@ fi
 
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo -e "  ${W}hide${N}  — открыть меню управления"
-[[ "$INSTALL_GRAFANA" == "true" ]] && \
+[[ "${INSTALL_GRAFANA:-false}" == "true" && -n "${GRAFANA_PASS:-}" ]] && \
   echo -e "  ${W}Grafana${N}: $GRAFANA_URL  логин: admin / $GRAFANA_PASS"
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo ""
 
-# Итоговая диагностика
 echo -e "  ${BOLD}Статус сервисов:${N}"
 for svc in nginx dnsproxy hipr-watchdog.timer; do
   systemctl is-active --quiet "$svc" 2>/dev/null \
     && echo -e "  ${G}✓${N}  $svc" || echo -e "  ${R}✗${N}  $svc"
 done
 
+IFS='|' read -ra _SNIS_CHK <<< "$SNI_DOMAINS"
 if [[ "$MODE" == "single" ]]; then
   systemctl is-active --quiet hipr-mtg 2>/dev/null \
     && echo -e "  ${G}✓${N}  hipr-mtg" || echo -e "  ${R}✗${N}  hipr-mtg"
 else
-  for i in "${!_SNIS[@]}"; do
+  for i in "${!_SNIS_CHK[@]}"; do
     systemctl is-active --quiet "hipr-mtg@${i}" 2>/dev/null \
-      && echo -e "  ${G}✓${N}  hipr-mtg@${i} (${_SNIS[$i]})" \
+      && echo -e "  ${G}✓${N}  hipr-mtg@${i} (${_SNIS_CHK[$i]})" \
       || echo -e "  ${R}✗${N}  hipr-mtg@${i}"
   done
 fi
+
+[[ "${INSTALL_GRAFANA:-false}" == "true" ]] && \
+  systemctl is-active --quiet prometheus 2>/dev/null \
+    && echo -e "  ${G}✓${N}  prometheus" || echo -e "  ${R}✗${N}  prometheus"
+
 echo ""
