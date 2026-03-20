@@ -40,8 +40,64 @@ svc_icon() {
 }
 
 get_stats() {
-  STAT_CONNS=$(grep -c "accepted connection" "$LOG_MTG" 2>/dev/null || echo "0")
-  STAT_TODAY=$(grep -c "$(date '+%Y/%m/%d')" "$LOG_MTG" 2>/dev/null || echo "0")
+  # mtg v2 пишет JSON с unix timestamp в миллисекундах и message="accepted connection"
+  # Считаем все соединения
+  STAT_CONNS=$(grep -c '"message":"accepted connection"' "$LOG_MTG" 2>/dev/null || echo "0")
+
+  # Соединения за сегодня — сравниваем timestamp с началом дня в мс
+  local today_start_ms
+  today_start_ms=$(python3 -c "
+import time
+t = time.strptime(time.strftime('%Y-%m-%d'), '%Y-%m-%d')
+print(int(time.mktime(t)) * 1000)
+" 2>/dev/null || echo "0")
+
+  if [[ "$today_start_ms" != "0" && -f "$LOG_MTG" ]]; then
+    STAT_TODAY=$(python3 -c "
+import json, sys
+start = $today_start_ms
+count = 0
+for line in open('$LOG_MTG', errors='ignore'):
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+        if d.get('message') == 'accepted connection' and d.get('timestamp', 0) >= start:
+            count += 1
+    except:
+        pass
+print(count)
+" 2>/dev/null || echo "0")
+  else
+    STAT_TODAY="0"
+  fi
+
+  # Трафик — суммируем bytes_from_client и bytes_from_telegram
+  STAT_BYTES=$(python3 -c "
+import json
+total = 0
+try:
+    for line in open('$LOG_MTG', errors='ignore'):
+        line = line.strip()
+        if not line: continue
+        try:
+            d = json.loads(line)
+            total += d.get('bytes_from_client', 0) + d.get('bytes_from_telegram', 0)
+        except:
+            pass
+# Форматируем
+if total > 1073741824:
+    print(f'{total/1073741824:.1f} GB')
+elif total > 1048576:
+    print(f'{total/1048576:.1f} MB')
+elif total > 1024:
+    print(f'{total/1024:.1f} KB')
+else:
+    print(f'{total} B')
+except:
+    print('—')
+" 2>/dev/null || echo "—")
 }
 
 active_theme() {
@@ -71,8 +127,8 @@ draw_header() {
   kvc "📡 DC:"       "${ACTIVE_DC:-—}"
   kv  "🎨 Тема:"    "$(active_theme)"
   sep
-  printf "${B}  ║${N}  📊  ${DIM}Сегодня${N}  ${Y}%-8s${N}  ${DIM}Всего${N}  ${Y}%-18s${N}${B}║${N}\n" \
-    "$STAT_TODAY" "$STAT_CONNS"
+  printf "${B}  ║${N}  📊  ${DIM}Сегодня${N}  ${Y}%-8s${N}  ${DIM}Всего${N}  ${Y}%-10s${N}  ${DIM}Трафик${N}  ${Y}%-6s${N}${B}║${N}\n" \
+    "$STAT_TODAY" "$STAT_CONNS" "$STAT_BYTES"
   row ""; bot_b; echo ""
 }
 
@@ -132,7 +188,7 @@ menu_status() {
     kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
     kv "🎨 Тема сайта:" "$(active_theme)"
     sep
-    kv "🔗 Соединений:" "$STAT_CONNS всего / $STAT_TODAY сегодня"
+    kv "🔗 Соединений:" "$STAT_CONNS всего / $STAT_TODAY сегодня / $STAT_BYTES"
     local ce; ce=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}" \
       | grep "Expiry" | awk '{print $3,$4}' | head -1)
     kv "🔒 Сертификат:" "${ce:-—}"
@@ -214,7 +270,7 @@ menu_link() {
   kv "🔑 Секрет:" "${MTG_SECRET:0:28}..."
   kv "🌐 Домен:" "$DOMAIN"
   kv "🔌 Порт:" "443"
-  kv "🛡️  Тип:" "FakeTLS (telegram.org)"
+  kv "🛡️  Тип:" "FakeTLS (microsoft.com)"
   row ""; bot_b; echo ""
   if command -v qrencode &>/dev/null; then
     echo -e "  ${BOLD}📱 QR-код:${N}\n"
@@ -594,15 +650,65 @@ menu_logs() {
 
 _stats_today() {
   clear; echo -e "\n  ${BOLD}📊 Статистика за сегодня${N}\n"
-  local today; today=$(date '+%Y/%m/%d')
-  local conns; conns=$(grep -c "accepted connection" "$LOG_MTG" 2>/dev/null || echo "0")
-  local today_c; today_c=$(grep "$today" "$LOG_MTG" 2>/dev/null | grep -c "accepted" || echo "0")
-  local errors; errors=$(grep -c "ERROR" "$LOG_MTG" 2>/dev/null || echo "0")
-  local wd_switches; wd_switches=$(grep -c "Переключаемся" "$LOG_WD" 2>/dev/null || echo "0")
-  printf "  🔗  %-28s ${Y}%s${N}\n" "Соединений сегодня:" "$today_c"
-  printf "  🔗  %-28s ${Y}%s${N}\n" "Всего соединений:" "$conns"
-  printf "  ❌  %-28s ${R}%s${N}\n" "Ошибок:" "$errors"
-  printf "  📡  %-28s ${C}%s${N}\n" "Смен DC:" "$wd_switches"
+
+  local today_start_ms
+  today_start_ms=$(python3 -c "
+import time
+t = time.strptime(time.strftime('%Y-%m-%d'), '%Y-%m-%d')
+print(int(time.mktime(t)) * 1000)
+" 2>/dev/null || echo "0")
+
+  local result
+  result=$(python3 -c "
+import json, sys
+start = $today_start_ms
+today_c = 0; total_c = 0; errors = 0
+bytes_today = 0; bytes_total = 0
+unique_today = set(); unique_total = set()
+try:
+    for line in open('$LOG_MTG', errors='ignore'):
+        line = line.strip()
+        if not line: continue
+        try:
+            d = json.loads(line)
+            ts = d.get('timestamp', 0)
+            msg = d.get('message', '')
+            lvl = d.get('level', '')
+            if msg == 'accepted connection':
+                total_c += 1
+                ip = d.get('remote_ip') or d.get('client_ip', '')
+                if ip: unique_total.add(ip)
+                b = d.get('bytes_from_client', 0) + d.get('bytes_from_telegram', 0)
+                bytes_total += b
+                if ts >= start:
+                    today_c += 1
+                    if ip: unique_today.add(ip)
+                    bytes_today += b
+            if lvl == 'error':
+                errors += 1
+        except:
+            pass
+except:
+    pass
+
+def fmt(b):
+    if b > 1073741824: return f'{b/1073741824:.1f} GB'
+    if b > 1048576: return f'{b/1048576:.1f} MB'
+    if b > 1024: return f'{b/1024:.1f} KB'
+    return f'{b} B'
+
+print(today_c, total_c, errors, len(unique_today), len(unique_total), fmt(bytes_today), fmt(bytes_total))
+" 2>/dev/null || echo "0 0 0 0 0 — —")
+
+  read -r today_c total_c errors uniq_today uniq_total bytes_today bytes_total <<< "$result"
+
+  printf "  🔗  %-30s ${Y}%s${N}\n"  "Соединений сегодня:"    "$today_c"
+  printf "  🔗  %-30s ${Y}%s${N}\n"  "Соединений всего:"      "$total_c"
+  printf "  👥  %-30s ${C}%s${N}\n"  "Уникальных IP сегодня:" "$uniq_today"
+  printf "  👥  %-30s ${C}%s${N}\n"  "Уникальных IP всего:"   "$uniq_total"
+  printf "  📦  %-30s ${G}%s${N}\n"  "Трафик сегодня:"        "$bytes_today"
+  printf "  📦  %-30s ${G}%s${N}\n"  "Трафик всего:"          "$bytes_total"
+  printf "  ❌  %-30s ${R}%s${N}\n"  "Ошибок:"                "$errors"
   echo ""; pause
 }
 
@@ -650,13 +756,13 @@ _regen_secret() {
   [[ "${c,,}" != "y" ]] && return
   load_cfg
   local new_secret
-  # Фронтинг всегда telegram.org — не домен сервера (иначе петля DNS)
+  # Фронтинг всегда microsoft.com — не домен сервера (иначе петля DNS)
   if [[ -x "$MTG_BIN" ]]; then
-    new_secret=$("$MTG_BIN" generate-secret --hex "telegram.org" 2>/dev/null | tr -d '\n')
+    new_secret=$("$MTG_BIN" generate-secret --hex "microsoft.com" 2>/dev/null | tr -d '\n')
   fi
   if [[ -z "${new_secret:-}" ]]; then
     local rh; rh=$(openssl rand -hex 16)
-    local dh; dh=$(echo -n "telegram.org" | xxd -p | tr -d '\n')
+    local dh; dh=$(echo -n "microsoft.com" | xxd -p | tr -d '\n')
     new_secret="ee${rh}${dh}"
   fi
   sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"$new_secret\"|" "$CONFIG_FILE"
