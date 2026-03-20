@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════
-#  HIPR CLI — команда: hide
+#  HIPR CLI — команда: hide  v4.0
 #  https://github.com/ChernOvOne/HIPR
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -12,84 +12,91 @@ WEB_DIR="/var/www/hipr"
 THEMES_LOCAL="$HIDE_DIR/themes"
 THEMES_API="https://api.github.com/repos/ChernOvOne/HIPR/contents/themes"
 THEMES_RAW="https://raw.githubusercontent.com/ChernOvOne/HIPR/main/themes"
-LOG_MTG="$HIDE_DIR/logs/mtg.log"
 LOG_WD="$HIDE_DIR/logs/watchdog.log"
 LOG_NGX="$HIDE_DIR/logs/nginx-access.log"
-VERSION="3.0"
+VERSION="4.0"
 
 R='\033[0;31m'; G='\033[0;32m'; Y='\033[1;33m'
 B='\033[0;34m'; C='\033[0;36m'; W='\033[1;37m'
 N='\033[0m';    BOLD='\033[1m'; DIM='\033[2m'
 
 # ── Утилиты ────────────────────────────────────────────────────────────────
-load_cfg()  { [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" || true; }
-top_b()     { echo -e "${B}  ╔══════════════════════════════════════════════════════════╗${N}"; }
-bot_b()     { echo -e "${B}  ╚══════════════════════════════════════════════════════════╝${N}"; }
-sep()       { echo -e "${B}  ╠══════════════════════════════════════════════════════════╣${N}"; }
-row()       { printf "${B}  ║${N} %-57s${B}║${N}\n" "$1"; }
-kv()        { printf "${B}  ║${N}  ${DIM}%-16s${N} ${W}%-39s${N}${B}║${N}\n" "$1" "$2"; }
-kvc()       { printf "${B}  ║${N}  ${DIM}%-16s${N} ${C}%-39s${N}${B}║${N}\n" "$1" "$2"; }
-pause()     { echo ""; read -rp "  Нажмите Enter для продолжения..." _; }
+load_cfg() { [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" || true; }
+top_b()    { echo -e "${B}  ╔══════════════════════════════════════════════════════════╗${N}"; }
+bot_b()    { echo -e "${B}  ╚══════════════════════════════════════════════════════════╝${N}"; }
+sep()      { echo -e "${B}  ╠══════════════════════════════════════════════════════════╣${N}"; }
+row()      { printf "${B}  ║${N} %-57s${B}║${N}\n" "$1"; }
+kv()       { printf "${B}  ║${N}  ${DIM}%-16s${N} ${W}%-39s${N}${B}║${N}\n" "$1" "$2"; }
+kvc()      { printf "${B}  ║${N}  ${DIM}%-16s${N} ${C}%-39s${N}${B}║${N}\n" "$1" "$2"; }
+pause()    { echo ""; read -rp "  Нажмите Enter для продолжения..." _; }
 
+svc_icon() {
+  systemctl is-active --quiet "$1" 2>/dev/null && echo "🟢" || echo "🔴"
+}
 svc_status() {
   systemctl is-active --quiet "$1" 2>/dev/null \
     && echo -e "${G}🟢 работает${N}" || echo -e "${R}🔴 остановлен${N}"
 }
-svc_icon() {
-  systemctl is-active --quiet "$1" 2>/dev/null && echo "🟢" || echo "🔴"
-}
-
-get_stats() {
-  local metrics
-  metrics=$(curl -sf --max-time 2 http://127.0.0.1:3129/metrics 2>/dev/null)
-
-  if [[ -z "$metrics" ]]; then
-    STAT_CONNS="—"; STAT_TODAY="—"; STAT_BYTES="—"
-    STAT_ACTIVE="0"; STAT_TG_CONNS="0"; STAT_FRONTING="0"
-    return
-  fi
-
-  # Активные соединения прямо сейчас
-  STAT_ACTIVE=$(echo "$metrics" | grep '^mtg_client_connections{' \
-    | awk '{sum+=$2} END{print int(sum)}')
-
-  # Всего domain fronting событий (FakeTLS handshakes)
-  STAT_FRONTING=$(echo "$metrics" | grep '^mtg_domain_fronting ' \
-    | awk '{print int($2)}')
-
-  # Активных соединений к Telegram
-  STAT_TG_CONNS=$(echo "$metrics" | grep '^mtg_telegram_connections{' \
-    | awk '{sum+=$2} END{print int(sum)}')
-
-  # Суммарный трафик (from_client + to_client к Telegram)
-  local bytes_total
-  bytes_total=$(echo "$metrics" | grep '^mtg_telegram_traffic{' \
-    | awk '{sum+=$2} END{print int(sum)}')
-  local bytes_front
-  bytes_front=$(echo "$metrics" | grep '^mtg_domain_fronting_traffic{' \
-    | awk '{sum+=$2} END{print int(sum)}')
-  local bytes_all=$(( bytes_total + bytes_front ))
-
-  if (( bytes_all > 1073741824 )); then
-    STAT_BYTES=$(python3 -c "print(f'{$bytes_all/1073741824:.1f} GB')")
-  elif (( bytes_all > 1048576 )); then
-    STAT_BYTES=$(python3 -c "print(f'{$bytes_all/1048576:.1f} MB')")
-  elif (( bytes_all > 1024 )); then
-    STAT_BYTES=$(python3 -c "print(f'{$bytes_all/1024:.1f} KB')")
-  else
-    STAT_BYTES="${bytes_all} B"
-  fi
-
-  # Replay атаки (active probing детект)
-  STAT_REPLAYS=$(echo "$metrics" | grep '^mtg_replay_attacks ' \
-    | awk '{print int($2)}')
-
-  STAT_CONNS="$STAT_ACTIVE"
-  STAT_TODAY="$STAT_TG_CONNS"
-}
 
 active_theme() {
   [[ -f "$HIDE_DIR/config/active_theme" ]] && cat "$HIDE_DIR/config/active_theme" || echo "—"
+}
+
+# ── Загрузка массивов из config.env ───────────────────────────────────────
+load_arrays() {
+  load_cfg
+  IFS='|' read -ra SNI_DOMAINS_ARR   <<< "${SNI_DOMAINS:-microsoft.com}"
+  IFS='|' read -ra MTG_SECRETS_ARR   <<< "${MTG_SECRETS:-}"
+  IFS='|' read -ra MTG_PORTS_ARR     <<< "${MTG_PORTS:-2398}"
+  IFS='|' read -ra MTG_PROM_PORTS_ARR <<< "${MTG_PROM_PORTS:-3129}"
+}
+
+# ── Получить имя сервиса mtg по индексу ───────────────────────────────────
+mtg_svc() {
+  local i=$1
+  load_cfg
+  if [[ "${MODE:-single}" == "multi" ]]; then
+    echo "hipr-mtg@${i}"
+  else
+    echo "hipr-mtg"
+  fi
+}
+
+# ── Получить метрики всех инстансов ───────────────────────────────────────
+get_stats() {
+  load_arrays
+  STAT_ACTIVE=0; STAT_TG=0; STAT_BYTES=0; STAT_REPLAYS=0
+  STAT_FRONTING=0; STAT_BYTES_FMT="—"
+
+  local total_bytes=0
+  for port in "${MTG_PROM_PORTS_ARR[@]}"; do
+    local m
+    m=$(curl -sf --max-time 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null)
+    [[ -z "$m" ]] && continue
+
+    STAT_ACTIVE=$(( STAT_ACTIVE + $(echo "$m" | grep '^mtg_client_connections{' \
+      | awk '{sum+=$2} END{print int(sum)}') ))
+    STAT_TG=$(( STAT_TG + $(echo "$m" | grep '^mtg_telegram_connections{' \
+      | awk '{sum+=$2} END{print int(sum)}') ))
+    STAT_REPLAYS=$(( STAT_REPLAYS + $(echo "$m" | grep '^mtg_replay_attacks ' \
+      | awk '{print int($2)}') ))
+    STAT_FRONTING=$(( STAT_FRONTING + $(echo "$m" | grep '^mtg_domain_fronting ' \
+      | awk '{print int($2)}') ))
+    local b
+    b=$(echo "$m" | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
+    total_bytes=$(( total_bytes + b ))
+  done
+
+  if (( total_bytes > 1073741824 )); then
+    STAT_BYTES_FMT=$(python3 -c "print(f'{$total_bytes/1073741824:.1f} GB')" 2>/dev/null)
+  elif (( total_bytes > 1048576 )); then
+    STAT_BYTES_FMT=$(python3 -c "print(f'{$total_bytes/1048576:.1f} MB')" 2>/dev/null)
+  elif (( total_bytes > 0 )); then
+    STAT_BYTES_FMT=$(python3 -c "print(f'{$total_bytes/1024:.1f} KB')" 2>/dev/null)
+  else
+    STAT_BYTES_FMT="0 B"
+  fi
+  STAT_BYTES=$total_bytes
 }
 
 # ── Шапка ─────────────────────────────────────────────────────────────────
@@ -101,22 +108,35 @@ draw_header() {
   echo "   ███████║██║██████╔╝██████╔╝"
   echo "   ██╔══██║██║██╔═══╝ ██╔══██╗"
   echo "   ██║  ██║██║██║     ██║  ██║"
-  echo "   ╚═╝  ╚═╝╚═╝╚═╝     ╚═╝  ╚═╝  v${VERSION}"
+  echo "   ╚═╝  ╚═╝╚═╝╚═╝     ╚═╝  ╚═╝  v${VERSION}  [${MODE:-single}]"
   echo -e "${N}"
-  local mtg_s nginx_s wd_s
-  mtg_s=$(svc_icon hipr-mtg)
-  nginx_s=$(svc_icon nginx)
-  wd_s=$(svc_icon hipr-watchdog.timer 2>/dev/null)
+
+  local mtg_icon nginx_icon wd_icon dns_icon
+  if [[ "${MODE:-single}" == "multi" ]]; then
+    load_arrays
+    local all_ok=true
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      systemctl is-active --quiet "hipr-mtg@${i}" 2>/dev/null || all_ok=false
+    done
+    [[ "$all_ok" == "true" ]] && mtg_icon="🟢" || mtg_icon="🟡"
+  else
+    mtg_icon=$(svc_icon hipr-mtg)
+  fi
+  nginx_icon=$(svc_icon nginx)
+  wd_icon=$(svc_icon hipr-watchdog.timer 2>/dev/null)
+  dns_icon=$(svc_icon dnsproxy)
+
   top_b
-  printf "${B}  ║${N}  %s %-13s %s %-13s %s %-18s${B}║${N}\n" \
-    "$mtg_s" "hipr-mtg" "$nginx_s" "nginx" "$wd_s" "watchdog"
+  printf "${B}  ║${N}  %s %-11s %s %-9s %s %-11s %s %-9s${B}║${N}\n" \
+    "$mtg_icon" "mtg" "$nginx_icon" "nginx" "$wd_icon" "watchdog" "$dns_icon" "dnsproxy"
   sep
-  kv  "🌐 Домен:"   "${DOMAIN:-не задан}"
-  kvc "📡 DC:"       "${ACTIVE_DC:-—}"
-  kv  "🎨 Тема:"    "$(active_theme)"
+  kv  "🌐 Домен:"  "${DOMAIN:-не задан}"
+  kvc "📡 DC:"      "${ACTIVE_DC:-—}"
+  kv  "🎨 Тема:"   "$(active_theme)"
+  kv  "⚙️  Режим:"  "${MODE:-single}"
   sep
-  printf "${B}  ║${N}  📊  ${DIM}Активных${N}  ${Y}%-4s${N}  ${DIM}→ Telegram${N}  ${Y}%-4s${N}  ${DIM}Трафик${N}  ${Y}%-8s${N}  ${DIM}Probing${N}  ${Y}%-4s${N}${B}║${N}\n" \
-    "$STAT_ACTIVE" "$STAT_TG_CONNS" "$STAT_BYTES" "${STAT_REPLAYS:-0}"
+  printf "${B}  ║${N}  🟢 ${DIM}Акт${N} ${Y}%-4s${N}  📡 ${DIM}TG${N} ${Y}%-4s${N}  📦 ${DIM}Трафик${N} ${Y}%-10s${N}  🛡️  ${DIM}Атак${N} ${Y}%-4s${N}${B}║${N}\n" \
+    "$STAT_ACTIVE" "$STAT_TG" "$STAT_BYTES_FMT" "$STAT_REPLAYS"
   row ""; bot_b; echo ""
 }
 
@@ -128,27 +148,29 @@ main_menu() {
     draw_header
     echo -e "  ${BOLD}${W}Главное меню${N}\n"
     echo -e "  ${C}[1]${N}  📊  Статус и мониторинг"
-    echo -e "  ${C}[2]${N}  🔗  Ссылка для Telegram + QR-код"
+    echo -e "  ${C}[2]${N}  🔗  Ссылки для Telegram + QR"
     echo -e "  ${C}[3]${N}  🎨  Темы сайта-обманки"
     echo -e "  ${C}[4]${N}  ⚙️   Управление сервисами"
-    echo -e "  ${C}[5]${N}  📋  Логи"
-    echo -e "  ${C}[6]${N}  🔧  Настройки"
+    echo -e "  ${C}[5]${N}  📋  Логи и статистика"
+    echo -e "  ${C}[6]${N}  🔧  Настройки и SNI"
     echo -e "  ${C}[7]${N}  🔄  Обновление"
+    echo -e "  ${C}[8]${N}  🚀  Оптимизация сервера (BBR)"
     echo ""
-    echo -e "  ${R}[8]${N}  🗑️   Удалить / Переустановить"
+    echo -e "  ${R}[9]${N}  🗑️   Удалить / Переустановить"
     echo ""
     echo -e "  ${DIM}[0]${N}  🚪  Выход"
     echo ""
-    read -rp "  Выберите [0-8]: " ch
+    read -rp "  Выберите [0-9]: " ch
     case "$ch" in
       1) menu_status ;;
-      2) menu_link ;;
+      2) menu_links ;;
       3) menu_themes ;;
       4) menu_services ;;
       5) menu_logs ;;
       6) menu_settings ;;
       7) menu_update ;;
-      8) menu_uninstall ;;
+      8) menu_optimize ;;
+      9) menu_uninstall ;;
       0|q|Q) echo ""; exit 0 ;;
       *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
     esac
@@ -160,25 +182,39 @@ main_menu() {
 # ══════════════════════════════════════════════════════════════════════════
 menu_status() {
   while true; do
-    load_cfg; get_stats; clear; echo ""
+    load_cfg; get_stats; load_arrays; clear; echo ""
     top_b
     printf "${B}  ║${N}  ${BOLD}📊 %-53s${N}${B}║${N}\n" "Статус и мониторинг"
     sep
-    for s in hipr-mtg nginx fail2ban; do
-      printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "$s" "$(svc_status $s)"
+
+    if [[ "${MODE:-single}" == "multi" ]]; then
+      for i in "${!SNI_DOMAINS_ARR[@]}"; do
+        printf "${B}  ║${N}  %-18s %-39b${B}║${N}\n" \
+          "mtg@${i} (${SNI_DOMAINS_ARR[$i]})" "$(svc_status "hipr-mtg@${i}")"
+      done
+    else
+      printf "${B}  ║${N}  %-18s %-39b${B}║${N}\n" "hipr-mtg" "$(svc_status hipr-mtg)"
+    fi
+
+    for s in nginx dnsproxy fail2ban; do
+      printf "${B}  ║${N}  %-18s %-39b${B}║${N}\n" "$s" "$(svc_status $s)"
     done
-    printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "watchdog" \
-      "$(svc_status hipr-watchdog.timer 2>/dev/null || echo '-')"
+    printf "${B}  ║${N}  %-18s %-39b${B}║${N}\n" "watchdog" \
+      "$(svc_status hipr-watchdog.timer 2>/dev/null)"
     sep
+
     local ip; ip=$(curl -s --max-time 4 ifconfig.me 2>/dev/null || echo "—")
     kv "🌍 Внешний IP:" "$ip"
     kv "🌐 Домен:" "${DOMAIN:-—}"
     kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
-    kv "🎨 Тема сайта:" "$(active_theme)"
+    kv "🎨 Тема:" "$(active_theme)"
+    kv "⚙️  Режим:" "${MODE:-single}"
     sep
-    kv "🔗 Активных:" "$STAT_ACTIVE сейчас / $STAT_TG_CONNS → Telegram"
-    kv "📦 Трафик:" "$STAT_BYTES"
-    kv "🛡️  Probing атак:" "${STAT_REPLAYS:-0}"
+    kv "🟢 Активных:" "$STAT_ACTIVE сейчас"
+    kv "📡 → Telegram:" "$STAT_TG соединений"
+    kv "📦 Трафик:" "$STAT_BYTES_FMT"
+    kv "🎭 FakeTLS:" "$STAT_FRONTING handshakes"
+    kv "🛡️  Replay атак:" "$STAT_REPLAYS"
     local ce; ce=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}" \
       | grep "Expiry" | awk '{print $3,$4}' | head -1)
     kv "🔒 Сертификат:" "${ce:-—}"
@@ -225,76 +261,95 @@ _check_all_dc() {
 }
 
 _ping_proxy() {
-  load_cfg; clear; echo -e "\n  ${BOLD}🔗 Проверка прокси${N}\n"
+  load_arrays; clear; echo -e "\n  ${BOLD}🔗 Проверка прокси${N}\n"
   local http_code; http_code=$(curl -sk -o /dev/null -w "%{http_code}" \
     "https://${DOMAIN:-localhost}" --max-time 5 2>/dev/null || echo "000")
-  if [[ "$http_code" == "200" || "$http_code" == "304" ]]; then
-    echo -e "  🟢  Сайт-обманка: ${G}HTTP $http_code${N}"
-  else
-    echo -e "  🔴  Сайт-обманка: ${R}HTTP $http_code${N}"
-  fi
-  if ss -tlnp 2>/dev/null | grep -q '127.0.0.1:2398'; then
-    echo -e "  🟢  mtg слушает: ${G}127.0.0.1:2398${N}"
-  else
-    echo -e "  🔴  mtg ${R}не слушает на 2398${N}"
-  fi
+  [[ "$http_code" == "200" || "$http_code" == "304" ]] \
+    && echo -e "  🟢  Сайт-обманка: ${G}HTTP $http_code${N}" \
+    || echo -e "  🔴  Сайт-обманка: ${R}HTTP $http_code${N}"
+
+  echo ""
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local port="${MTG_PORTS_ARR[$i]:-2398}"
+    local sni="${SNI_DOMAINS_ARR[$i]}"
+    ss -tlnp 2>/dev/null | grep -q "127.0.0.1:${port}" \
+      && echo -e "  🟢  mtg@${i} (${sni}): ${G}порт $port активен${N}" \
+      || echo -e "  🔴  mtg@${i} (${sni}): ${R}порт $port не слушает${N}"
+  done
   echo ""; pause
 }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 2. ССЫЛКА
+# 2. ССЫЛКИ
 # ══════════════════════════════════════════════════════════════════════════
-menu_link() {
-  load_cfg; clear; echo ""
-  local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}"
-  local ht="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}"
+menu_links() {
+  load_arrays; clear; echo ""
   top_b
-  printf "${B}  ║${N}  ${BOLD}🔗 %-53s${N}${B}║${N}\n" "Ссылка для Telegram"
+  printf "${B}  ║${N}  ${BOLD}🔗 %-53s${N}${B}║${N}\n" "Ссылки для Telegram"
   sep; row ""
-  echo -e "${B}  ║${N}  ${DIM}tg:// — открывает Telegram напрямую:${N}"
-  echo -e "${B}  ║${N}  ${C}${tg}${N}"
-  row ""
-  echo -e "${B}  ║${N}  ${DIM}https:// — для браузера и ботов:${N}"
-  echo -e "${B}  ║${N}  ${Y}${ht}${N}"
-  row ""; sep
-  kv "🔑 Секрет:" "${MTG_SECRET:0:28}..."
-  kv "🌐 Домен:" "$DOMAIN"
-  kv "🔌 Порт:" "443"
-  kv "🛡️  Тип:" "FakeTLS (microsoft.com)"
-  row ""; bot_b; echo ""
+
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local sni="${SNI_DOMAINS_ARR[$i]}"
+    local secret="${MTG_SECRETS_ARR[$i]}"
+    local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${secret}"
+    local ht="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${secret}"
+    printf "${B}  ║${N}  ${BOLD}[$((i+1))] SNI: ${C}%-44s${N}${B}║${N}\n" "$sni"
+    echo -e "${B}  ║${N}  ${DIM}tg://${N} ${C}${tg}${N}"
+    echo -e "${B}  ║${N}  ${DIM}https://${N} ${Y}${ht}${N}"
+    row ""
+  done
+
+  bot_b; echo ""
+
+  # QR для первой ссылки
   if command -v qrencode &>/dev/null; then
-    echo -e "  ${BOLD}📱 QR-код:${N}\n"
+    local first_secret="${MTG_SECRETS_ARR[0]}"
+    local ht="https://t.me/proxy?server=${DOMAIN}&port=443&secret=${first_secret}"
+    echo -e "  ${BOLD}📱 QR (первая ссылка):${N}\n"
     qrencode -t ANSIUTF8 -l M "$ht" 2>/dev/null | sed 's/^/    /'
     echo ""
   fi
-  echo -e "  ${C}[c]${N} 📋 Копировать ссылку  ${C}[s]${N} 📨 Отправить в бот  ${R}[0]${N} Назад"
+
+  echo -e "  ${C}[c]${N} 📋 Копировать все ссылки  ${C}[s]${N} 📨 Отправить в бот  ${R}[0]${N} Назад"
   echo ""
   read -rp "  " ch
   case "$ch" in
-    c|C)
-      echo -n "$tg" | xclip -selection clipboard 2>/dev/null || \
-        echo -n "$tg" | xsel --clipboard 2>/dev/null || \
-        { echo -e "\n  ${Y}Ссылка:${N} $tg"; }
-      echo -e "  ${G}✅ Скопировано${N}"; sleep 1 ;;
-    s|S) _send_link_to_bot "$tg" ;;
+    c|C) _copy_all_links ;;
+    s|S) _send_links_to_bot ;;
   esac
 }
 
-_send_link_to_bot() {
-  load_cfg
-  local link="$1"
-  if [[ -z "${BOT_TOKEN:-}" || -z "${BOT_CHAT_ID:-}" ]]; then
+_copy_all_links() {
+  load_arrays
+  local all=""
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRETS_ARR[$i]}"
+    all="${all}${tg}\n"
+  done
+  echo -e "$all" | xclip -selection clipboard 2>/dev/null || \
+    echo -e "$all" | xsel --clipboard 2>/dev/null || \
+    { echo -e "\n${Y}Ссылки:${N}\n$all"; }
+  echo -e "  ${G}✅ Скопировано${N}"; sleep 1
+}
+
+_send_links_to_bot() {
+  load_cfg; load_arrays
+  [[ -z "${BOT_TOKEN:-}" || -z "${BOT_CHAT_ID:-}" ]] && {
     echo -e "\n  ${Y}⚠️  Бот не настроен → hide → [6] Настройки → Telegram бот${N}"
-    sleep 2; return
-  fi
-  local msg="🔗 <b>HIPR прокси</b>%0A%0A<code>${link}</code>%0A%0A🌐 Домен: ${DOMAIN}"
-  if curl -s --max-time 10 \
+    sleep 2; return; }
+
+  local msg="🔗 <b>HIPR прокси ссылки</b>%0A%0A"
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRETS_ARR[$i]}"
+    msg="${msg}[$((i+1))] SNI: ${SNI_DOMAINS_ARR[$i]}%0A<code>${tg}</code>%0A%0A"
+  done
+  msg="${msg}🌐 ${DOMAIN}"
+
+  curl -s --max-time 10 \
     "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1; then
-    echo -e "\n  ${G}✅ Ссылка отправлена в бот${N}"
-  else
-    echo -e "\n  ${R}❌ Ошибка отправки — проверьте токен и chat_id${N}"
-  fi
+    -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1 \
+    && echo -e "\n  ${G}✅ Отправлено в бот${N}" \
+    || echo -e "\n  ${R}❌ Ошибка отправки${N}"
   sleep 2
 }
 
@@ -311,7 +366,7 @@ menu_themes() {
     kv "📁 Папка:" "$THEMES_LOCAL"
     bot_b; echo ""
     echo -e "  ${C}[1]${N}  ✅  Выбрать из установленных"
-    echo -e "  ${C}[2]${N}  ☁️   Скачать темы с GitHub"
+    echo -e "  ${C}[2]${N}  ☁️   Скачать с GitHub"
     echo -e "  ${C}[3]${N}  📦  Добавить свою (папка или .zip)"
     echo -e "  ${C}[4]${N}  🌐  Открыть сайт в браузере"
     echo -e "  ${C}[5]${N}  🗑️   Удалить пользовательскую тему"
@@ -351,8 +406,7 @@ collect_themes() {
 themes_pick() {
   collect_themes
   if [[ ${#THEME_DIRS[@]} -eq 0 ]]; then
-    echo -e "\n  ${Y}⚠️  Нет тем — скачайте с GitHub (пункт 2)${N}"
-    pause; return
+    echo -e "\n  ${Y}⚠️  Нет тем${N}"; pause; return
   fi
   clear; echo ""
   top_b
@@ -367,15 +421,13 @@ themes_pick() {
     row ""
   done
   bot_b; echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
-  read -rp "  Номер темы: " ch
+  read -rp "  Номер: " ch
   [[ "$ch" == "0" || "$ch" == "q" ]] && return
   [[ ! "$ch" =~ ^[0-9]+$ ]] && { echo -e "\n  ${R}Неверный номер${N}"; sleep 1; return; }
   local idx=$((ch-1))
-  if [[ $idx -ge 0 && $idx -lt ${#THEME_DIRS[@]} ]]; then
-    themes_apply "${THEME_DIRS[$idx]}" "${THEME_NAMES[$idx]}"
-  else
-    echo -e "\n  ${R}Нет такой темы${N}"; sleep 1
-  fi
+  [[ $idx -ge 0 && $idx -lt ${#THEME_DIRS[@]} ]] \
+    && themes_apply "${THEME_DIRS[$idx]}" "${THEME_NAMES[$idx]}" \
+    || { echo -e "\n  ${R}Нет такой темы${N}"; sleep 1; }
 }
 
 themes_apply() {
@@ -391,19 +443,14 @@ themes_apply() {
   printf 'User-agent: *\nDisallow: /\n' > "$WEB_DIR/robots.txt"
   chown -R www-data:www-data "$WEB_DIR" 2>/dev/null || true
   echo "$name" > "$HIDE_DIR/config/active_theme"
-  if nginx -t 2>/dev/null; then
-    systemctl reload nginx
-    echo -e "  ${G}✅ Тема «$name» активирована${N}"
-  else
-    echo -e "  ${R}❌ Ошибка nginx — откат${N}"
-    [[ -n "${bak:-}" ]] && cp -r "${bak:-}"/. "$WEB_DIR/" 2>/dev/null
-  fi
+  nginx -t 2>/dev/null && systemctl reload nginx \
+    && echo -e "  ${G}✅ Тема «$name» активирована${N}" \
+    || echo -e "  ${R}❌ Ошибка nginx${N}"
   pause
 }
 
 themes_github() {
   clear; echo -e "\n  ${BOLD}☁️  Темы на GitHub${N}\n"
-  echo -e "  ${DIM}Загружаем список...${N}\n"
   if ! curl -sf --max-time 5 https://api.github.com > /dev/null 2>&1; then
     echo -e "  ${R}❌ GitHub недоступен${N}"; pause; return
   fi
@@ -421,15 +468,9 @@ coming-soon")
   for i in "${!arr[@]}"; do
     local t="${arr[$i]}"
     local inst=""; [[ -d "$THEMES_LOCAL/$t" ]] && inst="${G}[установлена]${N}"
-    local desc; desc=$(curl -sf --max-time 5 "$THEMES_RAW/$t/theme.json" 2>/dev/null \
-      | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('preview',d.get('description','')))" \
-      2>/dev/null || echo "")
     printf "  ${C}[%d]${N} ${BOLD}%-22s${N} %-20b\n" "$((i+1))" "$t" "$inst"
-    [[ -n "$desc" ]] && echo -e "      ${DIM}$desc${N}"
-    echo ""
   done
-  echo -e "  ${C}[a]${N}  📥 Скачать все"
-  echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+  echo -e "\n  ${C}[a]${N} 📥 Скачать все  ${R}[0]${N} Назад"; echo ""
   read -rp "  Выбор: " ch
   if [[ "$ch" == "a" || "$ch" == "A" ]]; then
     for t in "${arr[@]}"; do _dl_theme "$t"; done
@@ -444,25 +485,10 @@ _dl_theme() {
   local name="$1" dest="$THEMES_LOCAL/$name"
   echo -e "\n  ${Y}📥 Скачиваю: $name${N}"
   mkdir -p "$dest"
-  local flist; flist=$(curl -sf --max-time 10 "$THEMES_API/$name" 2>/dev/null \
-    | python3 -c "
-import sys,json
-try:
-  for f in json.load(sys.stdin):
-    if f.get('type')=='file': print(f['name'], f['download_url'])
-except: pass" 2>/dev/null)
-  if [[ -n "$flist" ]]; then
-    while IFS=' ' read -r fname furl; do
-      [[ -z "$fname" ]] && continue
-      curl -sf --max-time 15 "$furl" -o "$dest/$fname" 2>/dev/null \
-        && echo -e "    ${G}✓${N} $fname" || echo -e "    ${R}✗${N} $fname"
-    done <<< "$flist"
-  else
-    for f in index.html theme.json about.html; do
-      curl -sf --max-time 10 "$THEMES_RAW/$name/$f" -o "$dest/$f" 2>/dev/null \
-        && echo -e "    ${G}✓${N} $f" || true
-    done
-  fi
+  for f in index.html theme.json about.html; do
+    curl -sf --max-time 10 "$THEMES_RAW/$name/$f" -o "$dest/$f" 2>/dev/null \
+      && echo -e "    ${G}✓${N} $f" || true
+  done
   [[ -f "$dest/index.html" ]] \
     && echo -e "  ${G}✅ '$name' установлена${N}" \
     || { echo -e "  ${R}❌ index.html не найден${N}"; rm -rf "$dest"; }
@@ -470,8 +496,7 @@ except: pass" 2>/dev/null)
 
 themes_add() {
   clear; echo -e "\n  ${BOLD}📦 Добавить свою тему${N}\n"
-  echo -e "  Укажите путь к папке с ${W}index.html${N} или к .zip архиву\n"
-  read -rp "  Путь: " src; [[ -z "$src" ]] && return
+  read -rp "  Путь к папке или .zip: " src; [[ -z "$src" ]] && return
   src="${src/#\~/$HOME}"
   if [[ -f "$src" && "$src" == *.zip ]]; then
     command -v unzip &>/dev/null || apt-get install -y -qq unzip 2>/dev/null
@@ -479,8 +504,7 @@ themes_add() {
     unzip -q "$src" -d "$tmp"
     local idx_path; idx_path=$(find "$tmp" -name "index.html" | head -1)
     [[ -z "$idx_path" ]] && { echo -e "\n  ${R}❌ index.html не найден${N}"; rm -rf "$tmp"; sleep 2; return; }
-    _install_theme "$(dirname "$idx_path")"
-    rm -rf "$tmp"
+    _install_theme "$(dirname "$idx_path")"; rm -rf "$tmp"
   elif [[ -d "$src" ]]; then
     [[ ! -f "$src/index.html" ]] && { echo -e "\n  ${R}❌ Нет index.html${N}"; sleep 2; return; }
     _install_theme "$src"
@@ -493,8 +517,7 @@ _install_theme() {
   local src="$1" name=""
   [[ -f "$src/theme.json" ]] && \
     name=$(python3 -c "import json; d=json.load(open('$src/theme.json')); print(d.get('name',''))" 2>/dev/null || true)
-  [[ -z "$name" ]] && { read -rp "  Название темы: " name; [[ -z "$name" ]] && return; }
-  [[ ! -f "$src/theme.json" ]] && printf '{"name":"%s","description":"Пользовательская тема","author":"custom","version":"1.0","preview":"Пользовательская тема","pages":["index.html"]}' "$name" > "$src/theme.json"
+  [[ -z "$name" ]] && { read -rp "  Название: " name; [[ -z "$name" ]] && return; }
   local safe; safe=$(echo "$name" | tr ' ' '-' | tr -cd '[:alnum:]-_' | tr '[:upper:]' '[:lower:]')
   local dest="$THEMES_LOCAL/custom/$safe"
   mkdir -p "$(dirname "$dest")"; cp -r "$src" "$dest"
@@ -534,22 +557,31 @@ themes_delete() {
   fi
 }
 
+
 # ══════════════════════════════════════════════════════════════════════════
 # 4. СЕРВИСЫ
 # ══════════════════════════════════════════════════════════════════════════
 menu_services() {
   while true; do
-    clear; echo ""
+    load_cfg; load_arrays; clear; echo ""
     top_b
     printf "${B}  ║${N}  ${BOLD}⚙️  %-53s${N}${B}║${N}\n" "Управление сервисами"
     sep; row ""
-    for s in hipr-mtg nginx fail2ban; do
-      printf "${B}  ║${N}  %-14s %-43b${B}║${N}\n" "$s" "$(svc_status $s)"
-    done
+
+    if [[ "${MODE:-single}" == "multi" ]]; then
+      for i in "${!SNI_DOMAINS_ARR[@]}"; do
+        printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n" \
+          "mtg@${i} (${SNI_DOMAINS_ARR[$i]})" "$(svc_status "hipr-mtg@${i}")"
+      done
+    else
+      printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n" "hipr-mtg" "$(svc_status hipr-mtg)"
+    fi
+    printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n" "dnsproxy" "$(svc_status dnsproxy)"
     row ""; bot_b; echo ""
-    echo -e "  ${C}[1]${N}  🔄  Перезапустить hipr-mtg"
-    echo -e "  ${C}[2]${N}  ⏹️   Остановить hipr-mtg"
-    echo -e "  ${C}[3]${N}  ▶️   Запустить hipr-mtg"
+
+    echo -e "  ${C}[1]${N}  🔄  Перезапустить все mtg"
+    echo -e "  ${C}[2]${N}  ⏹️   Остановить все mtg"
+    echo -e "  ${C}[3]${N}  ▶️   Запустить все mtg"
     echo -e "  ${C}[4]${N}  🔄  Перезапустить nginx"
     echo -e "  ${C}[5]${N}  🔄  Перезапустить всё"
     echo -e "  ${C}[6]${N}  📡  Сменить Telegram DC"
@@ -557,21 +589,34 @@ menu_services() {
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
-      1) systemctl restart hipr-mtg \
-           && echo -e "\n  ${G}✅ Перезапущен${N}" || echo -e "\n  ${R}❌${N}"; sleep 2 ;;
-      2) systemctl stop hipr-mtg; echo -e "\n  ${Y}⏹️  Остановлен${N}"; sleep 2 ;;
-      3) systemctl start hipr-mtg \
-           && echo -e "\n  ${G}▶️  Запущен${N}"; sleep 2 ;;
+      1) _mtg_action restart ;;
+      2) _mtg_action stop ;;
+      3) _mtg_action start ;;
       4) nginx -t 2>/dev/null && systemctl reload nginx \
            && echo -e "\n  ${G}✅ nginx перезагружен${N}"; sleep 2 ;;
-      5) systemctl restart hipr-mtg nginx \
-           && echo -e "\n  ${G}✅ Всё перезапущено${N}"; sleep 2 ;;
+      5) _mtg_action restart
+         systemctl reload nginx 2>/dev/null
+         echo -e "\n  ${G}✅ Всё перезапущено${N}"; sleep 2 ;;
       6) _change_dc ;;
       7) bash "$HIDE_DIR/bin/watchdog.sh" \
            && echo -e "\n  ${G}✅ Watchdog выполнен${N}"; sleep 2 ;;
       0|q) return ;;
     esac
   done
+}
+
+_mtg_action() {
+  local action=$1; load_cfg; load_arrays
+  if [[ "${MODE:-single}" == "multi" ]]; then
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      systemctl "$action" "hipr-mtg@${i}" 2>/dev/null \
+        && echo -e "  ${G}✅ hipr-mtg@${i}${N}" || echo -e "  ${R}❌ hipr-mtg@${i}${N}"
+    done
+  else
+    systemctl "$action" hipr-mtg 2>/dev/null \
+      && echo -e "  ${G}✅ hipr-mtg${N}" || echo -e "  ${R}❌ hipr-mtg${N}"
+  fi
+  sleep 2
 }
 
 _change_dc() {
@@ -594,200 +639,692 @@ _change_dc() {
   if [[ -n "$entry" ]]; then
     local ip="${entry##*:}"
     sed -i "s/ACTIVE_DC=.*/ACTIVE_DC=\"$ip\"/" "$CONFIG_FILE"
-    systemctl restart hipr-mtg
+    _mtg_action restart
     echo -e "\n  ${G}✅ Переключено на $ip${N}"
   fi
   sleep 2
 }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 5. ЛОГИ
+# 5. ЛОГИ И СТАТИСТИКА
 # ══════════════════════════════════════════════════════════════════════════
 menu_logs() {
   while true; do
     clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}📋 %-53s${N}${B}║${N}\n" "Логи"
+    printf "${B}  ║${N}  ${BOLD}📋 %-53s${N}${B}║${N}\n" "Логи и статистика"
     sep
-    kv "mtg.log:" "$(du -sh $LOG_MTG 2>/dev/null | cut -f1 || echo '0')"
     kv "watchdog.log:" "$(du -sh $LOG_WD 2>/dev/null | cut -f1 || echo '0')"
     kv "nginx:" "$(du -sh $LOG_NGX 2>/dev/null | cut -f1 || echo '0')"
     bot_b; echo ""
-    echo -e "  ${C}[1]${N}  📄  Последние 50 строк mtg"
-    echo -e "  ${C}[2]${N}  👁️   Live-режим mtg (Ctrl+C выход)"
+    echo -e "  ${C}[1]${N}  📊  Полная статистика (Prometheus)"
+    echo -e "  ${C}[2]${N}  📈  Статистика по инстансам"
     echo -e "  ${C}[3]${N}  🐕  Watchdog лог"
     echo -e "  ${C}[4]${N}  🌐  nginx access лог"
-    echo -e "  ${C}[5]${N}  📊  Статистика за сегодня"
-    echo -e "  ${C}[6]${N}  🗑️   Очистить все логи"
+    echo -e "  ${C}[5]${N}  🔍  Probing детект лог"
+    echo -e "  ${C}[6]${N}  👁️   Live лог mtg (первый инстанс)"
+    echo -e "  ${C}[7]${N}  📨  Отправить отчёт в бот"
+    echo -e "  ${C}[8]${N}  🗑️   Очистить логи"
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
-      1) clear; tail -50 "$LOG_MTG" 2>/dev/null \
-           | grep --color=always -E 'accepted|ERROR|WARN|$'
-         echo ""; pause ;;
-      2) tail -f "$LOG_MTG" 2>/dev/null ;;
+      1) _stats_full ;;
+      2) _stats_per_instance ;;
       3) clear; tail -50 "$LOG_WD" 2>/dev/null || echo "  Пусто"; pause ;;
       4) clear; tail -50 "$LOG_NGX" 2>/dev/null || echo "  Пусто"; pause ;;
-      5) _stats_today ;;
-      6) read -rp "  🗑️  Очистить все логи? [y/N]: " c
+      5) clear; tail -50 "$HIDE_DIR/logs/probing.log" 2>/dev/null || echo "  Пусто"; pause ;;
+      6) load_cfg
+         local log0="$HIDE_DIR/logs/mtg0.log"
+         [[ "${MODE:-single}" == "single" ]] && log0="$HIDE_DIR/logs/mtg0.log"
+         tail -f "$log0" 2>/dev/null ;;
+      7) bash "$HIDE_DIR/bin/daily-report.sh" 2>/dev/null \
+           && echo -e "\n  ${G}✅ Отчёт отправлен${N}" \
+           || echo -e "\n  ${R}❌ Ошибка — проверьте настройки бота${N}"
+         sleep 2 ;;
+      8) read -rp "  🗑️  Очистить все логи? [y/N]: " c
          [[ "${c,,}" == "y" ]] && {
-           > "$LOG_MTG"; > "$LOG_WD"
+           for f in "$HIDE_DIR/logs/"*.log; do > "$f" 2>/dev/null; done
            echo -e "  ${G}✅ Логи очищены${N}"; sleep 1; } ;;
       0|q) return ;;
     esac
   done
 }
 
-_stats_today() {
-  clear; echo -e "\n  ${BOLD}📊 Статистика прокси${N}\n"
+_stats_full() {
+  load_arrays; clear; echo -e "\n  ${BOLD}📊 Статистика прокси${N}\n"
 
-  local metrics
-  metrics=$(curl -sf --max-time 3 http://127.0.0.1:3129/metrics 2>/dev/null)
+  local total_active=0 total_tg=0 total_bytes=0
+  local total_replays=0 total_fronting=0
 
-  if [[ -z "$metrics" ]]; then
-    echo -e "  ${R}❌ Prometheus недоступен (127.0.0.1:3129)${N}"
-    echo -e "  ${DIM}Проверьте: systemctl status hipr-mtg${N}"
-    echo ""; pause; return
-  fi
+  for i in "${!MTG_PROM_PORTS_ARR[@]}"; do
+    local port="${MTG_PROM_PORTS_ARR[$i]}"
+    local m; m=$(curl -sf --max-time 3 "http://127.0.0.1:${port}/metrics" 2>/dev/null)
+    [[ -z "$m" ]] && continue
+    total_active=$(( total_active + $(echo "$m" | grep '^mtg_client_connections{' | awk '{sum+=$2} END{print int(sum)}') ))
+    total_tg=$(( total_tg + $(echo "$m" | grep '^mtg_telegram_connections{' | awk '{sum+=$2} END{print int(sum)}') ))
+    total_replays=$(( total_replays + $(echo "$m" | grep '^mtg_replay_attacks ' | awk '{print int($2)}') ))
+    total_fronting=$(( total_fronting + $(echo "$m" | grep '^mtg_domain_fronting ' | awk '{print int($2)}') ))
+    local b; b=$(echo "$m" | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
+    total_bytes=$(( total_bytes + b ))
+  done
 
-  local active tg_conns fronting replays concurrency
-  active=$(echo "$metrics" | grep '^mtg_client_connections{' \
-    | awk '{sum+=$2} END{print int(sum)}')
-  tg_conns=$(echo "$metrics" | grep '^mtg_telegram_connections{' \
-    | awk '{sum+=$2} END{print int(sum)}')
-  fronting=$(echo "$metrics" | grep '^mtg_domain_fronting ' \
-    | awk '{print int($2)}')
-  replays=$(echo "$metrics" | grep '^mtg_replay_attacks ' \
-    | awk '{print int($2)}')
-  concurrency=$(echo "$metrics" | grep '^mtg_concurrency_limited ' \
-    | awk '{print int($2)}')
+  local fmt_b; fmt_b=$(python3 -c "
+b=$total_bytes
+if b > 1073741824: print(f'{b/1073741824:.1f} GB')
+elif b > 1048576: print(f'{b/1048576:.1f} MB')
+elif b > 1024: print(f'{b/1024:.1f} KB')
+else: print(f'{b} B')
+" 2>/dev/null || echo "${total_bytes}B")
 
-  # Трафик к Telegram
-  local tg_in tg_out front_in front_out
-  tg_in=$(echo "$metrics" | grep '^mtg_telegram_traffic{' \
-    | grep 'from_client' | awk '{sum+=$2} END{print int(sum)}')
-  tg_out=$(echo "$metrics" | grep '^mtg_telegram_traffic{' \
-    | grep 'to_client' | awk '{sum+=$2} END{print int(sum)}')
-  front_in=$(echo "$metrics" | grep '^mtg_domain_fronting_traffic{' \
-    | grep 'from_client' | awk '{sum+=$2} END{print int(sum)}')
-  front_out=$(echo "$metrics" | grep '^mtg_domain_fronting_traffic{' \
-    | grep 'to_client' | awk '{sum+=$2} END{print int(sum)}')
+  printf "  🟢  %-32s ${Y}%s${N}\n"  "Активных соединений:"   "$total_active"
+  printf "  📡  %-32s ${Y}%s${N}\n"  "→ Telegram:"            "$total_tg"
+  printf "  📦  %-32s ${G}%s${N}\n"  "Трафик всего:"          "$fmt_b"
+  printf "  🎭  %-32s ${C}%s${N}\n"  "FakeTLS handshakes:"    "$total_fronting"
+  printf "  🛡️   %-32s ${R}%s${N}\n" "Replay/probing атак:"   "$total_replays"
+  echo ""; pause
+}
 
-  fmt_bytes() {
-    local b=$1
-    if (( b > 1073741824 )); then echo "$(python3 -c "print(f'{$b/1073741824:.1f} GB')")";
-    elif (( b > 1048576 )); then echo "$(python3 -c "print(f'{$b/1048576:.1f} MB')")";
-    elif (( b > 1024 )); then echo "$(python3 -c "print(f'{$b/1024:.1f} KB')")";
-    else echo "${b} B"; fi
-  }
+_stats_per_instance() {
+  load_arrays; clear; echo -e "\n  ${BOLD}📈 Статистика по инстансам${N}\n"
 
-  # DC распределение
-  local dc_info
-  dc_info=$(echo "$metrics" | grep '^mtg_telegram_connections{' \
-    | sed 's/mtg_telegram_connections{dc="\([^"]*\)",telegram_ip="\([^"]*\)"} \(.*\)/DC\1 (\2): \3/')
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local sni="${SNI_DOMAINS_ARR[$i]}"
+    local port="${MTG_PROM_PORTS_ARR[$i]:-$((3129+i))}"
+    local svc; svc=$(mtg_svc $i)
+    local status; systemctl is-active --quiet "$svc" 2>/dev/null && status="${G}🟢${N}" || status="${R}🔴${N}"
 
-  printf "  🟢  %-30s ${Y}%s${N}\n"  "Активных соединений:"     "${active:-0}"
-  printf "  📡  %-30s ${Y}%s${N}\n"  "→ Telegram DC:"           "${tg_conns:-0}"
-  printf "  📥  %-30s ${G}%s${N}\n"  "Трафик входящий:"         "$(fmt_bytes ${tg_in:-0})"
-  printf "  📤  %-30s ${G}%s${N}\n"  "Трафик исходящий:"        "$(fmt_bytes ${tg_out:-0})"
-  printf "  🎭  %-30s ${C}%s${N}\n"  "FakeTLS handshakes:"      "${fronting:-0}"
-  printf "  🛡️   %-30s ${R}%s${N}\n" "Replay/probing атак:"     "${replays:-0}"
-  printf "  🚫  %-30s ${Y}%s${N}\n"  "Отклонено (лимит):"       "${concurrency:-0}"
-  echo ""
-  if [[ -n "$dc_info" ]]; then
-    echo -e "  ${BOLD}📡 Соединения по DC:${N}"
-    while IFS= read -r line; do
-      echo -e "  ${DIM}$line${N}"
-    done <<< "$dc_info"
+    echo -e "  ${BOLD}[$((i+1))] ${C}$sni${N} $status"
+
+    local m; m=$(curl -sf --max-time 2 "http://127.0.0.1:${port}/metrics" 2>/dev/null)
+    if [[ -z "$m" ]]; then
+      echo -e "  ${DIM}Prometheus недоступен (порт $port)${N}\n"
+      continue
+    fi
+
+    local active tg bytes fronting replays
+    active=$(echo "$m" | grep '^mtg_client_connections{' | awk '{sum+=$2} END{print int(sum)}')
+    tg=$(echo "$m" | grep '^mtg_telegram_connections{' | awk '{sum+=$2} END{print int(sum)}')
+    bytes=$(echo "$m" | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
+    fronting=$(echo "$m" | grep '^mtg_domain_fronting ' | awk '{print int($2)}')
+    replays=$(echo "$m" | grep '^mtg_replay_attacks ' | awk '{print int($2)}')
+    local fmt_b; fmt_b=$(python3 -c "
+b=${bytes:-0}
+if b>1048576: print(f'{b/1048576:.1f}MB')
+elif b>1024: print(f'{b/1024:.1f}KB')
+else: print(f'{b}B')
+" 2>/dev/null || echo "—")
+
+    printf "  ${DIM}  Акт: ${Y}%-4s${N}  ${DIM}TG: ${Y}%-4s${N}  ${DIM}Трафик: ${G}%-8s${N}  ${DIM}FakeTLS: ${C}%-6s${N}  ${DIM}Атак: ${R}%s${N}\n" \
+      "${active:-0}" "${tg:-0}" "$fmt_b" "${fronting:-0}" "${replays:-0}"
     echo ""
-  fi
+  done
   pause
 }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 6. НАСТРОЙКИ
+# 6. НАСТРОЙКИ И SNI
 # ══════════════════════════════════════════════════════════════════════════
 menu_settings() {
   while true; do
-    load_cfg; clear; echo ""
+    load_cfg; load_arrays; clear; echo ""
     top_b
-    printf "${B}  ║${N}  ${BOLD}🔧 %-53s${N}${B}║${N}\n" "Настройки"
+    printf "${B}  ║${N}  ${BOLD}🔧 %-53s${N}${B}║${N}\n" "Настройки и SNI"
     sep
     kv "🌐 Домен:" "${DOMAIN:-—}"
     kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
-    kv "🔑 Секрет:" "${MTG_SECRET:0:24}..."
-    kv "🤖 Telegram бот:" "$( [[ -n "${BOT_TOKEN:-}" ]] && echo '✅ настроен' || echo '➖ не настроен' )"
+    kv "⚙️  Режим:" "${MODE:-single}"
+    kv "🔑 SNI домен(ы):" "$(IFS=', '; echo "${SNI_DOMAINS_ARR[*]}")"
+    kv "🤖 Telegram бот:" "$( [[ -n "${BOT_TOKEN:-}" ]] && echo '✅ настроен' || echo '➖ нет' )"
+    [[ -n "${GRAFANA_URL:-}" ]] && kv "📈 Grafana:" "$GRAFANA_URL"
     bot_b; echo ""
-    echo -e "  ${C}[1]${N}  🔑  Пересоздать секрет ${R}(ссылки изменятся!)${N}"
+
+    if [[ "${MODE:-single}" == "single" ]]; then
+      echo -e "  ${C}[1]${N}  🔑  Сменить SNI домен"
+    else
+      echo -e "  ${C}[1]${N}  🔀  Управление Multi-fronting"
+    fi
     echo -e "  ${C}[2]${N}  🔒  Обновить TLS сертификат"
     echo -e "  ${C}[3]${N}  📡  Проверить все Telegram DC"
     echo -e "  ${C}[4]${N}  🤖  Настроить Telegram-бот"
     echo -e "  ${C}[5]${N}  📄  Показать полный конфиг"
+    echo -e "  ${C}[6]${N}  🔄  Сменить режим (single ↔ multi)"
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
-      1) _regen_secret ;;
+      1)
+        if [[ "${MODE:-single}" == "single" ]]; then
+          _change_sni_single
+        else
+          _manage_multi_fronting
+        fi ;;
       2) _renew_cert ;;
       3) _check_all_dc ;;
       4) _setup_bot ;;
       5) clear; echo ""
          grep -v "^#" "$CONFIG_FILE" | grep -v "^$" | \
            while IFS='=' read -r k v; do
-             printf "  ${C}%-18s${N} = ${W}%s${N}\n" "$k" "$v"
+             printf "  ${C}%-20s${N} = ${W}%s${N}\n" "$k" "$v"
            done
          echo ""; pause ;;
+      6) _switch_mode ;;
       0|q) return ;;
     esac
   done
 }
 
-_regen_secret() {
+# ── Смена SNI для обычного режима ─────────────────────────────────────────
+_change_sni_single() {
+  load_cfg; load_arrays; clear
+  echo -e "\n  ${BOLD}🔑 Смена SNI домена${N}\n"
+  echo -e "  ${DIM}Текущий SNI: ${C}${SNI_DOMAINS_ARR[0]:-?}${N}\n"
+  echo -e "  ${W}Выберите новый SNI домен:${N}\n"
+  echo -e "  ${C}[1]${N}  microsoft.com   ${DIM}(рекомендуется)${N}"
+  echo -e "  ${C}[2]${N}  avito.ru        ${DIM}(российский)${N}"
+  echo -e "  ${C}[3]${N}  ozon.ru         ${DIM}(российский)${N}"
+  echo -e "  ${C}[4]${N}  wildberries.ru  ${DIM}(российский)${N}"
+  echo -e "  ${C}[5]${N}  sberbank.ru     ${DIM}(российский, надёжный)${N}"
+  echo -e "  ${C}[6]${N}  Свой домен"
   echo ""
-  echo -e "  ${Y}⚠️  Все пользователи со старой ссылкой потеряют подключение!${N}"
-  read -rp "  Сгенерировать новый секрет? [y/N]: " c
-  [[ "${c,,}" != "y" ]] && return
-  load_cfg
+  read -rp "  Выбор [1-6]: " ch
+
+  local new_sni
+  case "$ch" in
+    1) new_sni="microsoft.com" ;;
+    2) new_sni="avito.ru" ;;
+    3) new_sni="ozon.ru" ;;
+    4) new_sni="wildberries.ru" ;;
+    5) new_sni="sberbank.ru" ;;
+    6) read -rp "  Введите домен: " new_sni; [[ -z "$new_sni" ]] && return ;;
+    *) return ;;
+  esac
+
+  echo ""
+  info_msg "Генерируем новый секрет для $new_sni..."
+
   local new_secret
-  # Фронтинг всегда microsoft.com — не домен сервера (иначе петля DNS)
-  if [[ -x "$MTG_BIN" ]]; then
-    new_secret=$("$MTG_BIN" generate-secret --hex "microsoft.com" 2>/dev/null | tr -d '\n')
-  fi
-  if [[ -z "${new_secret:-}" ]]; then
+  new_secret=$("$MTG_BIN" generate-secret --hex "$new_sni" 2>/dev/null | tr -d '\n')
+  if [[ -z "$new_secret" ]]; then
     local rh; rh=$(openssl rand -hex 16)
-    local dh; dh=$(echo -n "microsoft.com" | xxd -p | tr -d '\n')
+    local dh; dh=$(echo -n "$new_sni" | xxd -p | tr -d '\n')
     new_secret="ee${rh}${dh}"
   fi
+
+  # Обновляем конфиги
+  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_secret\"|" "$CONFIG_FILE"
   sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"$new_secret\"|" "$CONFIG_FILE"
-  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg.toml"
-  systemctl restart hipr-mtg
-  echo -e "\n  ${G}✅ Новый секрет применён${N}"
-  echo -e "  ${Y}📢 Раздайте новую ссылку: hide → [2]${N}"
-  sleep 3
+  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg0.toml"
+
+  # Обновляем doppelganger URL
+  python3 - "$HIDE_DIR/config/mtg0.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
+import sys, re
+path, sni = sys.argv[1], sys.argv[2]
+content = open(path).read()
+content = re.sub(
+  r'\[defense\.doppelganger\]\nurls = \[.*?\]',
+  f'[defense.doppelganger]\nurls = [\n  "https://{sni}/",\n  "https://{sni}"\n]',
+  content, flags=re.DOTALL
+)
+open(path, 'w').write(content)
+PYEOF
+
+  # Обновляем nginx stream карту
+  cat > /etc/nginx/snippets/hipr-stream.conf << EOF
+stream {
+    map \$ssl_preread_server_name \$hipr_backend {
+        $new_sni   127.0.0.1:${MTG_PORTS_ARR[0]:-2398};
+        default    127.0.0.1:8443;
+    }
+    server {
+        listen 443;
+        listen [::]:443;
+        proxy_pass            \$hipr_backend;
+        ssl_preread           on;
+        proxy_timeout         10m;
+        proxy_connect_timeout 10s;
+    }
+}
+EOF
+
+  nginx -t 2>/dev/null && systemctl reload nginx
+  systemctl restart hipr-mtg 2>/dev/null
+  sleep 2
+
+  local new_link="tg://proxy?server=${DOMAIN}&port=443&secret=${new_secret}"
+  echo ""
+  echo -e "  ${G}✅ SNI изменён на: ${BOLD}$new_sni${N}"
+  echo -e "  ${BOLD}🔗 Новая ссылка:${N}"
+  echo ""
+  echo -e "  ${C}${new_link}${N}"
+  echo ""
+
+  # Предлагаем отправить в бот
+  if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
+    read -rp "  Отправить новую ссылку в бот? [Y/n]: " send_bot
+    if [[ "${send_bot,,}" != "n" ]]; then
+      local msg="🔑 <b>SNI изменён</b>%0A%0ASNI: <code>$new_sni</code>%0A%0A🔗 Новая ссылка:%0A<code>${new_link}</code>"
+      curl -s --max-time 10 \
+        "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1 \
+        && echo -e "  ${G}✅ Ссылка отправлена в бот${N}" \
+        || echo -e "  ${R}❌ Ошибка отправки${N}"
+    fi
+  fi
+  pause
+}
+
+info_msg() { echo -e "  ${Y}→${N}  $*"; }
+
+# ── Управление Multi-fronting ──────────────────────────────────────────────
+_manage_multi_fronting() {
+  load_arrays
+  while true; do
+    clear; echo ""
+    echo -e "  ${BOLD}🔀 Multi-fronting управление${N}\n"
+
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      local sni="${SNI_DOMAINS_ARR[$i]}"
+      local secret="${MTG_SECRETS_ARR[$i]:-?}"
+      local port="${MTG_PORTS_ARR[$i]:-?}"
+      local svc; svc=$(mtg_svc $i)
+      local icon; systemctl is-active --quiet "$svc" 2>/dev/null && icon="🟢" || icon="🔴"
+      printf "  %s ${C}[%d]${N} %-22s ${DIM}порт:${N} %-6s ${DIM}секрет:${N} %s...\n" \
+        "$icon" "$((i+1))" "$sni" "$port" "${secret:0:16}"
+    done
+
+    echo ""
+    echo -e "  ${C}[s]${N}  ✏️   Сменить SNI конкретного инстанса"
+    echo -e "  ${C}[a]${N}  ➕  Добавить инстанс"
+    echo -e "  ${C}[d]${N}  ➖  Удалить инстанс"
+    echo -e "  ${C}[r]${N}  🔄  Ротация всех SNI сразу"
+    echo -e "  ${C}[l]${N}  🔗  Показать все ссылки"
+    echo ""
+    echo -e "  ${R}[0]${N}  ← Назад"
+    echo ""
+    read -rp "  Выбор: " ch
+    case "$ch" in
+      s|S) _mf_change_sni ;;
+      a|A) _mf_add_instance ;;
+      d|D) _mf_remove_instance ;;
+      r|R) _mf_rotate_all ;;
+      l|L) _mf_show_links ;;
+      0|q) return ;;
+      *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
+    esac
+    load_arrays  # перезагружаем после изменений
+  done
+}
+
+_mf_show_links() {
+  load_arrays; clear; echo -e "\n  ${BOLD}🔗 Все ссылки Multi-fronting${N}\n"
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local sni="${SNI_DOMAINS_ARR[$i]}"
+    local secret="${MTG_SECRETS_ARR[$i]}"
+    local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${secret}"
+    echo -e "  ${BOLD}[$((i+1))] ${C}$sni${N}"
+    echo -e "  ${C}${tg}${N}\n"
+  done
+  pause
+}
+
+_mf_change_sni() {
+  load_arrays
+  echo ""
+  echo -e "  Какой инстанс менять? (1-${#SNI_DOMAINS_ARR[@]})"
+  read -rp "  Номер: " num
+  [[ ! "$num" =~ ^[0-9]+$ ]] && return
+  local idx=$((num-1))
+  [[ $idx -lt 0 || $idx -ge ${#SNI_DOMAINS_ARR[@]} ]] && { echo -e "  ${R}Нет такого${N}"; sleep 1; return; }
+
+  local old_sni="${SNI_DOMAINS_ARR[$idx]}"
+  echo -e "\n  ${DIM}Текущий SNI: ${C}$old_sni${N}\n"
+  echo -e "  ${C}[1]${N}  microsoft.com"
+  echo -e "  ${C}[2]${N}  avito.ru"
+  echo -e "  ${C}[3]${N}  ozon.ru"
+  echo -e "  ${C}[4]${N}  wildberries.ru"
+  echo -e "  ${C}[5]${N}  sberbank.ru"
+  echo -e "  ${C}[6]${N}  Свой домен"
+  echo ""
+  read -rp "  Выбор: " ch
+
+  local new_sni
+  case "$ch" in
+    1) new_sni="microsoft.com" ;;
+    2) new_sni="avito.ru" ;;
+    3) new_sni="ozon.ru" ;;
+    4) new_sni="wildberries.ru" ;;
+    5) new_sni="sberbank.ru" ;;
+    6) read -rp "  Домен: " new_sni; [[ -z "$new_sni" ]] && return ;;
+    *) return ;;
+  esac
+
+  _apply_sni_change "$idx" "$new_sni"
+}
+
+_apply_sni_change() {
+  local idx=$1 new_sni=$2
+  load_arrays
+
+  info_msg "Генерируем секрет для $new_sni..."
+  local new_secret
+  new_secret=$("$MTG_BIN" generate-secret --hex "$new_sni" 2>/dev/null | tr -d '\n')
+  if [[ -z "$new_secret" ]]; then
+    local rh; rh=$(openssl rand -hex 16)
+    local dh; dh=$(echo -n "$new_sni" | xxd -p | tr -d '\n')
+    new_secret="ee${rh}${dh}"
+  fi
+
+  # Обновляем массивы
+  SNI_DOMAINS_ARR[$idx]="$new_sni"
+  MTG_SECRETS_ARR[$idx]="$new_secret"
+
+  # Сохраняем в config.env
+  local new_sni_str; new_sni_str=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
+  local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
+  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
+  # Compat
+  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
+
+  # Обновляем toml
+  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg${idx}.toml"
+  python3 - "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
+import sys, re
+path, sni = sys.argv[1], sys.argv[2]
+content = open(path).read()
+content = re.sub(
+  r'\[defense\.doppelganger\]\nurls = \[.*?\]',
+  f'[defense.doppelganger]\nurls = [\n  "https://{sni}/",\n  "https://{sni}"\n]',
+  content, flags=re.DOTALL
+)
+open(path, 'w').write(content)
+PYEOF
+
+  # Пересобираем nginx stream карту
+  _rebuild_nginx_stream
+
+  # Перезапускаем инстанс
+  local svc; svc=$(mtg_svc $idx)
+  systemctl restart "$svc" 2>/dev/null
+  sleep 2
+
+  local new_link="tg://proxy?server=${DOMAIN}&port=443&secret=${new_secret}"
+  echo ""
+  echo -e "  ${G}✅ Инстанс $((idx+1)) SNI → ${BOLD}$new_sni${N}"
+  echo -e "  ${BOLD}🔗 Ссылка:${N}"
+  echo -e "  ${C}${new_link}${N}"
+  echo ""
+
+  # Отправить в бот
+  if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
+    read -rp "  Отправить новую ссылку в бот? [Y/n]: " sb
+    if [[ "${sb,,}" != "n" ]]; then
+      local msg="🔑 <b>Multi-fronting: SNI[$((idx+1))] изменён</b>%0A%0ASNI: <code>$new_sni</code>%0A%0A🔗 Новая ссылка:%0A<code>${new_link}</code>"
+      curl -s --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+        -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1 \
+        && echo -e "  ${G}✅ Отправлено${N}" || echo -e "  ${R}❌ Ошибка${N}"
+    fi
+  fi
+  pause
+}
+
+_mf_rotate_all() {
+  load_arrays
+  echo -e "\n  ${Y}⚠️  Все SNI домены будут сменены. Все старые ссылки перестанут работать!${N}"
+  read -rp "  Продолжить? [y/N]: " c
+  [[ "${c,,}" != "y" ]] && return
+
+  local PRESET=("microsoft.com" "avito.ru" "ozon.ru" "wildberries.ru" "sberbank.ru")
+  info_msg "Ротация SNI доменов..."
+
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    local new_sni="${PRESET[$((i % ${#PRESET[@]}))]}"
+    _apply_sni_change_silent "$i" "$new_sni"
+  done
+
+  _rebuild_nginx_stream
+  _mtg_action restart
+  sleep 2
+
+  echo -e "\n  ${G}✅ Ротация завершена. Новые ссылки:${N}\n"
+  _mf_show_links
+}
+
+_apply_sni_change_silent() {
+  local idx=$1 new_sni=$2
+  load_arrays
+  local new_secret
+  new_secret=$("$MTG_BIN" generate-secret --hex "$new_sni" 2>/dev/null | tr -d '\n')
+  if [[ -z "$new_secret" ]]; then
+    local rh; rh=$(openssl rand -hex 16)
+    local dh; dh=$(echo -n "$new_sni" | xxd -p | tr -d '\n')
+    new_secret="ee${rh}${dh}"
+  fi
+  SNI_DOMAINS_ARR[$idx]="$new_sni"
+  MTG_SECRETS_ARR[$idx]="$new_secret"
+  local new_sni_str; new_sni_str=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
+  local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
+  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
+  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg${idx}.toml"
+  echo -e "  ${G}✓${N}  [$((idx+1))] $new_sni"
+}
+
+_mf_add_instance() {
+  load_arrays
+  local count=${#SNI_DOMAINS_ARR[@]}
+  if [[ $count -ge 5 ]]; then
+    echo -e "\n  ${Y}⚠️  Максимум 5 инстансов${N}"; pause; return
+  fi
+
+  echo -e "\n  ${BOLD}➕ Добавить инстанс${N}\n"
+  echo -e "  ${C}[1]${N}  microsoft.com"
+  echo -e "  ${C}[2]${N}  avito.ru"
+  echo -e "  ${C}[3]${N}  ozon.ru"
+  echo -e "  ${C}[4]${N}  wildberries.ru"
+  echo -e "  ${C}[5]${N}  sberbank.ru"
+  echo -e "  ${C}[6]${N}  Свой домен"
+  echo ""
+  read -rp "  Выбор: " ch
+
+  local new_sni
+  case "$ch" in
+    1) new_sni="microsoft.com" ;;
+    2) new_sni="avito.ru" ;;
+    3) new_sni="ozon.ru" ;;
+    4) new_sni="wildberries.ru" ;;
+    5) new_sni="sberbank.ru" ;;
+    6) read -rp "  Домен: " new_sni; [[ -z "$new_sni" ]] && return ;;
+    *) return ;;
+  esac
+
+  local idx=$count
+  local new_port=$((2398 + idx))
+  local new_prom=$((3129 + idx))
+
+  local new_secret
+  new_secret=$("$MTG_BIN" generate-secret --hex "$new_sni" 2>/dev/null | tr -d '\n')
+  if [[ -z "$new_secret" ]]; then
+    local rh; rh=$(openssl rand -hex 16)
+    local dh; dh=$(echo -n "$new_sni" | xxd -p | tr -d '\n')
+    new_secret="ee${rh}${dh}"
+  fi
+
+  # Создаём toml
+  cat > "$HIDE_DIR/config/mtg${idx}.toml" << EOF
+secret = "$new_secret"
+bind-to = "127.0.0.1:$new_port"
+
+[network]
+  dns = "https://cloudflare-dns.com/dns-query"
+
+[defense.anti-replay]
+enabled = true
+max-size = "1mib"
+
+[defense.doppelganger]
+urls = ["https://$new_sni/"]
+
+[stats.prometheus]
+enabled = true
+bind-to = "127.0.0.1:$new_prom"
+http-path = "/metrics"
+metric-prefix = "mtg"
+
+[upstream]
+prefer-ip = "prefer-ipv4"
+EOF
+
+  touch "$HIDE_DIR/logs/mtg${idx}.log" "$HIDE_DIR/logs/mtg${idx}-error.log"
+  chown mtgproxy:mtgproxy "$HIDE_DIR/logs/mtg${idx}.log" \
+    "$HIDE_DIR/logs/mtg${idx}-error.log" 2>/dev/null || true
+
+  # Обновляем config.env
+  SNI_DOMAINS_ARR+=("$new_sni")
+  MTG_SECRETS_ARR+=("$new_secret")
+  MTG_PORTS_ARR+=("$new_port")
+  MTG_PROM_PORTS_ARR+=("$new_prom")
+
+  local new_sni_str; new_sni_str=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
+  local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
+  local new_port_str; new_port_str=$(IFS='|'; echo "${MTG_PORTS_ARR[*]}")
+  local new_prom_str; new_prom_str=$(IFS='|'; echo "${MTG_PROM_PORTS_ARR[*]}")
+  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_PORTS=.*|MTG_PORTS=\"$new_port_str\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_PROM_PORTS=.*|MTG_PROM_PORTS=\"$new_prom_str\"|" "$CONFIG_FILE"
+
+  # Запускаем systemd
+  systemctl daemon-reload
+  systemctl enable "hipr-mtg@${idx}" 2>/dev/null
+  systemctl start "hipr-mtg@${idx}"
+  sleep 2
+
+  _rebuild_nginx_stream
+
+  local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${new_secret}"
+  echo ""
+  echo -e "  ${G}✅ Инстанс добавлен: ${C}$new_sni${N}"
+  echo -e "  ${C}${tg}${N}"
+  pause
+}
+
+_mf_remove_instance() {
+  load_arrays
+  local count=${#SNI_DOMAINS_ARR[@]}
+  if [[ $count -le 1 ]]; then
+    echo -e "\n  ${Y}⚠️  Нельзя удалить последний инстанс${N}"; pause; return
+  fi
+
+  echo -e "\n  ${BOLD}➖ Удалить инстанс${N}\n"
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    printf "  ${C}[%d]${N} %s\n" "$((i+1))" "${SNI_DOMAINS_ARR[$i]}"
+  done
+  echo ""; echo -e "  ${R}[0]${N} Назад"
+  read -rp "  Номер: " num
+  [[ ! "$num" =~ ^[0-9]+$ || "$num" == "0" ]] && return
+  local idx=$((num-1))
+  [[ $idx -lt 0 || $idx -ge $count ]] && return
+
+  read -rp "  Удалить инстанс ${SNI_DOMAINS_ARR[$idx]}? [y/N]: " c
+  [[ "${c,,}" != "y" ]] && return
+
+  # Останавливаем сервис
+  local svc; svc=$(mtg_svc $idx)
+  systemctl stop "$svc" 2>/dev/null
+  systemctl disable "$svc" 2>/dev/null
+
+  # Удаляем из массивов
+  unset 'SNI_DOMAINS_ARR[$idx]'
+  unset 'MTG_SECRETS_ARR[$idx]'
+  unset 'MTG_PORTS_ARR[$idx]'
+  unset 'MTG_PROM_PORTS_ARR[$idx]'
+  SNI_DOMAINS_ARR=("${SNI_DOMAINS_ARR[@]}")
+  MTG_SECRETS_ARR=("${MTG_SECRETS_ARR[@]}")
+  MTG_PORTS_ARR=("${MTG_PORTS_ARR[@]}")
+  MTG_PROM_PORTS_ARR=("${MTG_PROM_PORTS_ARR[@]}")
+
+  # Сохраняем
+  local s1; s1=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
+  local s2; s2=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
+  local s3; s3=$(IFS='|'; echo "${MTG_PORTS_ARR[*]}")
+  local s4; s4=$(IFS='|'; echo "${MTG_PROM_PORTS_ARR[*]}")
+  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$s1\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$s2\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_PORTS=.*|MTG_PORTS=\"$s3\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_PROM_PORTS=.*|MTG_PROM_PORTS=\"$s4\"|" "$CONFIG_FILE"
+  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
+
+  _rebuild_nginx_stream
+  echo -e "\n  ${G}✅ Инстанс удалён${N}"; pause
+}
+
+# ── Пересобираем nginx stream карту ───────────────────────────────────────
+_rebuild_nginx_stream() {
+  load_arrays
+  local map=""
+  for i in "${!SNI_DOMAINS_ARR[@]}"; do
+    map="${map}        ${SNI_DOMAINS_ARR[$i]}   127.0.0.1:${MTG_PORTS_ARR[$i]};\n"
+  done
+
+  cat > /etc/nginx/snippets/hipr-stream.conf << EOF
+stream {
+    map \$ssl_preread_server_name \$hipr_backend {
+$(echo -e "$map")        default         127.0.0.1:8443;
+    }
+    server {
+        listen 443;
+        listen [::]:443;
+        proxy_pass            \$hipr_backend;
+        ssl_preread           on;
+        proxy_timeout         10m;
+        proxy_connect_timeout 10s;
+    }
+}
+EOF
+
+  nginx -t 2>/dev/null && systemctl reload nginx \
+    && echo -e "  ${G}✓${N}  nginx stream обновлён" \
+    || echo -e "  ${R}✗${N}  Ошибка nginx"
 }
 
 _renew_cert() {
   load_cfg; echo ""
   echo -e "  ${Y}🔒 Обновляем сертификат для $DOMAIN...${N}\n"
-  if certbot renew --force-renewal -d "${DOMAIN:-}" 2>&1 | tail -8; then
-    systemctl reload nginx
-    echo -e "\n  ${G}✅ Сертификат обновлён${N}"
+  certbot renew --force-renewal -d "${DOMAIN:-}" 2>&1 | tail -8
+  systemctl reload nginx
+  echo -e "\n  ${G}✅ Готово${N}"; sleep 3
+}
+
+_switch_mode() {
+  load_cfg
+  echo ""
+  if [[ "${MODE:-single}" == "single" ]]; then
+    echo -e "  ${Y}⚠️  Переключение в Multi-fronting режим${N}"
+    echo -e "  ${DIM}Будет создано 3 инстанса: microsoft.com, avito.ru, ozon.ru${N}"
+    read -rp "  Продолжить? [y/N]: " c
+    [[ "${c,,}" != "y" ]] && return
+    sed -i 's/MODE=.*/MODE="multi"/' "$CONFIG_FILE"
+    echo -e "\n  ${Y}→${N}  Запустите: sudo bash install.sh для полной настройки Multi-fronting"
   else
-    echo -e "\n  ${R}❌ Ошибка — проверьте DNS${N}"
+    echo -e "  ${Y}⚠️  Переключение в обычный режим${N}"
+    read -rp "  Продолжить? [y/N]: " c
+    [[ "${c,,}" != "y" ]] && return
+    sed -i 's/MODE=.*/MODE="single"/' "$CONFIG_FILE"
+    echo -e "\n  ${Y}→${N}  Запустите: sudo bash install.sh для полной настройки"
   fi
-  sleep 3
+  sleep 2
 }
 
 _setup_bot() {
   clear; echo -e "\n  ${BOLD}🤖 Настройка Telegram-бота${N}\n"
   echo -e "  1. Откройте @BotFather в Telegram"
-  echo -e "  2. Создайте бота: /newbot"
-  echo -e "  3. Скопируйте токен"
-  echo -e "  4. Напишите боту /start"
-  echo -e "  5. Получите chat_id: ${C}api.telegram.org/bot<TOKEN>/getUpdates${N}\n"
-  read -rp "  Bot Token: " tok
-  [[ -z "$tok" ]] && return
-  read -rp "  Chat ID: " cid
-  [[ -z "$cid" ]] && return
+  echo -e "  2. /newbot → скопируйте токен"
+  echo -e "  3. Напишите боту /start"
+  echo -e "  4. Узнайте chat_id: ${C}api.telegram.org/bot<TOKEN>/getUpdates${N}\n"
+  read -rp "  Bot Token: " tok; [[ -z "$tok" ]] && return
+  read -rp "  Chat ID: " cid; [[ -z "$cid" ]] && return
   if curl -sf --max-time 10 \
     "https://api.telegram.org/bot${tok}/sendMessage" \
     -d "chat_id=${cid}&text=✅ HIPR бот подключён!" > /dev/null 2>&1; then
@@ -800,6 +1337,7 @@ _setup_bot() {
   sleep 3
 }
 
+
 # ══════════════════════════════════════════════════════════════════════════
 # 7. ОБНОВЛЕНИЕ
 # ══════════════════════════════════════════════════════════════════════════
@@ -809,9 +1347,10 @@ menu_update() {
   printf "${B}  ║${N}  ${BOLD}🔄 %-53s${N}${B}║${N}\n" "Обновление"
   bot_b; echo ""
   echo -e "  ${C}[1]${N}  ⚡  Обновить mtg до последней версии"
-  echo -e "  ${C}[2]${N}  🔄  Обновить hide (CLI меню)"
-  echo -e "  ${C}[3]${N}  📦  Обновить пакеты системы"
-  echo -e "  ${C}[4]${N}  ℹ️   Версии компонентов"
+  echo -e "  ${C}[2]${N}  🔄  Обновить hide"
+  echo -e "  ${C}[3]${N}  🔄  Обновить dnsproxy"
+  echo -e "  ${C}[4]${N}  📦  Обновить пакеты системы"
+  echo -e "  ${C}[5]${N}  ℹ️   Версии компонентов"
   echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
   read -rp "  Выберите: " ch
   case "$ch" in
@@ -824,15 +1363,16 @@ menu_update() {
       if [[ -n "$latest" ]]; then
         local arch; arch=$(uname -m)
         case "$arch" in x86_64) ma="amd64" ;; aarch64) ma="arm64" ;; *) ma="amd64" ;; esac
-        local url="https://github.com/9seconds/mtg/releases/download/v${latest}/mtg-${latest}-linux-${ma}.tar.gz"
-        wget -q "$url" -O /tmp/mtg_new.tar.gz 2>/dev/null && \
-          tar -xzf /tmp/mtg_new.tar.gz -C /tmp/ && \
-          find /tmp -name "mtg" -newer /tmp/mtg_new.tar.gz -type f | head -1 | \
-            xargs -I{} cp {} "$MTG_BIN" && \
-          chmod +x "$MTG_BIN" && systemctl restart hipr-mtg && \
-          echo -e "  ${G}✅ mtg обновлён до v$latest${N}" || \
-          echo -e "  ${R}❌ Ошибка обновления${N}"
-        rm -f /tmp/mtg_new.tar.gz
+        wget -q "https://github.com/9seconds/mtg/releases/download/v${latest}/mtg-${latest}-linux-${ma}.tar.gz" \
+          -O /tmp/mtg_new.tar.gz 2>/dev/null && {
+          mkdir -p /tmp/mtg-upd
+          tar -xzf /tmp/mtg_new.tar.gz -C /tmp/mtg-upd/
+          find /tmp/mtg-upd -name "mtg" -type f | head -1 | xargs -I{} cp {} "$MTG_BIN"
+          chmod +x "$MTG_BIN"
+          rm -rf /tmp/mtg_new.tar.gz /tmp/mtg-upd
+          _mtg_action restart
+          echo -e "  ${G}✅ mtg обновлён до v$latest${N}"
+        } || echo -e "  ${R}❌ Ошибка загрузки${N}"
       else
         echo -e "  ${Y}⚠️  Не удалось получить версию${N}"
       fi
@@ -843,21 +1383,150 @@ menu_update() {
         -o "$HIDE_BIN" && chmod +x "$HIDE_BIN" && \
         echo -e "  ${G}✅ hide обновлён${N}" || echo -e "  ${R}❌ Ошибка${N}"
       sleep 2 ;;
-    3) apt-get update -qq && apt-get upgrade -y -qq 2>&1 | tail -5; sleep 2 ;;
-    4)
+    3)
+      echo -e "\n  ${Y}🔄 Обновляем dnsproxy...${N}"
+      local dlatest; dlatest=$(curl -sf --max-time 10 \
+        "https://api.github.com/repos/AdguardTeam/dnsproxy/releases/latest" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))" \
+        2>/dev/null || echo "")
+      if [[ -n "$dlatest" ]]; then
+        local arch; arch=$(uname -m)
+        case "$arch" in x86_64) da="linux-amd64" ;; aarch64) da="linux-arm64" ;; *) da="linux-amd64" ;; esac
+        wget -q "https://github.com/AdguardTeam/dnsproxy/releases/download/v${dlatest}/dnsproxy-${da}-v${dlatest}.tar.gz" \
+          -O /tmp/dns_new.tar.gz 2>/dev/null && {
+          mkdir -p /tmp/dns-upd
+          tar -xzf /tmp/dns_new.tar.gz -C /tmp/dns-upd/
+          find /tmp/dns-upd -name "dnsproxy" -type f | head -1 | xargs -I{} cp {} /usr/local/bin/dnsproxy
+          chmod +x /usr/local/bin/dnsproxy
+          rm -rf /tmp/dns_new.tar.gz /tmp/dns-upd
+          systemctl restart dnsproxy
+          echo -e "  ${G}✅ dnsproxy обновлён до v$dlatest${N}"
+        } || echo -e "  ${R}❌ Ошибка${N}"
+      fi
+      sleep 2 ;;
+    4) apt-get update -qq && apt-get upgrade -y -qq 2>&1 | tail -5; sleep 2 ;;
+    5)
       clear; echo ""
-      printf "  %-20s %s\n" "HIPR:" "$VERSION"
-      printf "  %-20s %s\n" "mtg:" "$($MTG_BIN --version 2>/dev/null | head -1 || echo '—')"
-      printf "  %-20s %s\n" "nginx:" "$(nginx -v 2>&1 | grep -o '[0-9.]*' | head -1)"
-      printf "  %-20s %s\n" "certbot:" "$(certbot --version 2>/dev/null | head -1 || echo '—')"
-      printf "  %-20s %s\n" "OpenSSL:" "$(openssl version | awk '{print $2}')"
+      printf "  %-22s %s\n" "HIPR:" "$VERSION"
+      printf "  %-22s %s\n" "mtg:" "$($MTG_BIN --version 2>/dev/null | head -1 || echo '—')"
+      printf "  %-22s %s\n" "dnsproxy:" "$(dnsproxy --version 2>&1 | head -1 || echo '—')"
+      printf "  %-22s %s\n" "nginx:" "$(nginx -v 2>&1 | grep -o '[0-9.]*' | head -1)"
+      printf "  %-22s %s\n" "certbot:" "$(certbot --version 2>/dev/null | head -1 || echo '—')"
+      printf "  %-22s %s\n" "OpenSSL:" "$(openssl version | awk '{print $2}')"
+      [[ -x /usr/local/bin/prometheus ]] && \
+        printf "  %-22s %s\n" "Prometheus:" "$(prometheus --version 2>&1 | head -1 || echo '—')"
+      [[ -f /etc/grafana/grafana.ini ]] && \
+        printf "  %-22s %s\n" "Grafana:" "$(grafana --version 2>/dev/null || echo 'установлена')"
       echo ""; pause ;;
     0|q) return ;;
   esac
 }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 8. УДАЛЕНИЕ / ПЕРЕУСТАНОВКА
+# 8. ОПТИМИЗАЦИЯ СЕРВЕРА
+# ══════════════════════════════════════════════════════════════════════════
+menu_optimize() {
+  while true; do
+    clear; echo ""
+    top_b
+    printf "${B}  ║${N}  ${BOLD}🚀 %-53s${N}${B}║${N}\n" "Оптимизация сервера"
+    sep
+
+    # Текущий статус
+    local bbr_status congestion
+    congestion=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "unknown")
+    [[ "$congestion" == "bbr" ]] && bbr_status="${G}✅ включён${N}" || bbr_status="${R}❌ выключен${N}"
+    printf "${B}  ║${N}  ${DIM}%-16s${N} %-39b${B}║${N}\n" "BBR:" "$bbr_status"
+
+    local ulimit_val; ulimit_val=$(ulimit -n 2>/dev/null || echo "?")
+    kv "Файл. дескрипт.:" "$ulimit_val"
+    local somaxconn; somaxconn=$(sysctl -n net.core.somaxconn 2>/dev/null || echo "?")
+    kv "somaxconn:" "$somaxconn"
+    bot_b; echo ""
+
+    echo -e "  ${C}[1]${N}  🚀  Включить BBR"
+    echo -e "  ${C}[2]${N}  ⚡  Применить оптимизации sysctl (100+ юзеров)"
+    echo -e "  ${C}[3]${N}  📊  Показать текущие параметры сети"
+    echo -e "  ${C}[4]${N}  🔄  Сбросить к дефолтным настройкам"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+    read -rp "  Выберите: " ch
+    case "$ch" in
+      1) _enable_bbr ;;
+      2) _apply_sysctl ;;
+      3) _show_network_params ;;
+      4) _reset_sysctl ;;
+      0|q) return ;;
+    esac
+  done
+}
+
+_enable_bbr() {
+  echo ""
+  if sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null | grep -q bbr; then
+    echo -e "  ${G}✅ BBR уже включён${N}"; pause; return
+  fi
+  modprobe tcp_bbr 2>/dev/null || true
+  echo "net.core.default_qdisc = fq" >> /etc/sysctl.d/99-hipr.conf
+  echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-hipr.conf
+  sysctl -p /etc/sysctl.d/99-hipr.conf > /dev/null 2>&1
+  local check; check=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+  [[ "$check" == "bbr" ]] \
+    && echo -e "  ${G}✅ BBR включён${N}" \
+    || echo -e "  ${Y}⚠️  BBR недоступен на этом ядре (нужен Linux 4.9+)${N}"
+  pause
+}
+
+_apply_sysctl() {
+  echo ""
+  cat > /etc/sysctl.d/99-hipr.conf << 'SYSCTL'
+# HIPR — оптимизации для 100+ пользователей
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_fin_timeout = 15
+fs.file-max = 1000000
+SYSCTL
+  sysctl -p /etc/sysctl.d/99-hipr.conf > /dev/null 2>&1 \
+    && echo -e "  ${G}✅ sysctl оптимизирован${N}" \
+    || echo -e "  ${Y}⚠️  Частично применено${N}"
+  pause
+}
+
+_show_network_params() {
+  clear; echo -e "\n  ${BOLD}📊 Параметры сети${N}\n"
+  local params=(
+    "net.ipv4.tcp_congestion_control"
+    "net.core.somaxconn"
+    "net.core.rmem_max"
+    "net.core.wmem_max"
+    "net.ipv4.tcp_tw_reuse"
+    "net.ipv4.tcp_fin_timeout"
+    "fs.file-max"
+  )
+  for p in "${params[@]}"; do
+    local val; val=$(sysctl -n "$p" 2>/dev/null || echo "—")
+    printf "  ${DIM}%-42s${N} ${Y}%s${N}\n" "$p" "$val"
+  done
+  echo ""; pause
+}
+
+_reset_sysctl() {
+  read -rp "  Сбросить настройки sysctl? [y/N]: " c
+  [[ "${c,,}" != "y" ]] && return
+  rm -f /etc/sysctl.d/99-hipr.conf
+  echo -e "  ${G}✅ Файл удалён. Перезагрузите сервер для применения${N}"
+  pause
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 9. УДАЛЕНИЕ / ПЕРЕУСТАНОВКА
 # ══════════════════════════════════════════════════════════════════════════
 menu_uninstall() {
   clear; echo ""
@@ -865,8 +1534,8 @@ menu_uninstall() {
   echo -e "${R}${BOLD}  ║   ⚠️   УДАЛЕНИЕ / ПЕРЕУСТАНОВКА HIPR                    ║${N}"
   echo -e "${R}${BOLD}  ╚══════════════════════════════════════════════════════════╝${N}"
   echo ""
-  echo -e "  ${C}[1]${N}  🔄  Переустановить (запустить install.sh заново)"
-  echo -e "  ${C}[2]${N}  🗑️   Полностью удалить HIPR с сервера"
+  echo -e "  ${C}[1]${N}  🔄  Переустановить"
+  echo -e "  ${C}[2]${N}  🗑️   Полностью удалить"
   echo ""
   echo -e "  ${R}[0]${N}  ← Назад"
   echo ""
@@ -880,14 +1549,14 @@ menu_uninstall() {
 
 _reinstall() {
   echo ""
-  echo -e "  ${Y}⚠️  Будет запущен install.sh — текущая установка будет пересоздана.${N}"
+  echo -e "  ${Y}⚠️  Будет запущен install.sh — текущая установка будет пересоздана${N}"
   read -rp "  Продолжить? [y/N]: " c
   [[ "${c,,}" != "y" ]] && return
-  local install_url="https://raw.githubusercontent.com/ChernOvOne/HIPR/main/install.sh"
-  if curl -sf --max-time 5 "$install_url" > /dev/null 2>&1; then
-    bash <(curl -fsSL "$install_url")
+  local url="https://raw.githubusercontent.com/ChernOvOne/HIPR/main/install.sh"
+  if curl -sf --max-time 5 "$url" > /dev/null 2>&1; then
+    bash <(curl -fsSL "$url")
   else
-    echo -e "\n  ${R}❌ GitHub недоступен. Скачайте install.sh вручную.${N}"
+    echo -e "\n  ${R}❌ GitHub недоступен. Скачайте install.sh вручную${N}"
     sleep 3
   fi
 }
@@ -895,20 +1564,15 @@ _reinstall() {
 _full_uninstall() {
   clear; echo ""
   echo -e "  ${R}${BOLD}⚠️  ПОЛНОЕ УДАЛЕНИЕ HIPR${N}\n"
-  echo -e "  Будет удалено:"
-  echo -e "  ${DIM}• Сервисы hipr-mtg, watchdog${N}"
-  echo -e "  ${DIM}• /opt/hipr   /var/www/hipr   /usr/local/bin/hide${N}"
-  echo -e "  ${DIM}• nginx конфиги hipr (сам nginx останется)${N}"
-  echo -e "  ${DIM}• Cron задача certbot (сертификат останется)${N}"
+  echo -e "  Будет удалено: все сервисы, /opt/hipr, /var/www/hipr, /usr/local/bin/hide"
+  echo -e "  ${G}Останется:${N} nginx, certbot, сертификаты"
   echo ""
-  echo -e "  ${G}Останется:${N} ${DIM}nginx, certbot, Let's Encrypt сертификаты${N}"
-  echo ""
-  read -rp "  💾 Сохранить бэкап перед удалением? [Y/n]: " do_bak
+  read -rp "  💾 Сохранить бэкап? [Y/n]: " do_bak
   if [[ "${do_bak,,}" != "n" ]]; then
     local bak="/root/hipr_backup_$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$bak"
     [[ -f "$CONFIG_FILE" ]]              && cp "$CONFIG_FILE" "$bak/"
-    [[ -f "$HIDE_DIR/config/mtg.toml" ]] && cp "$HIDE_DIR/config/mtg.toml" "$bak/"
+    [[ -d "$HIDE_DIR/config" ]]          && cp -r "$HIDE_DIR/config" "$bak/"
     [[ -d "$HIDE_DIR/themes/custom" ]]   && cp -r "$HIDE_DIR/themes/custom" "$bak/" 2>/dev/null || true
     cp -r /etc/letsencrypt/live "$bak/letsencrypt" 2>/dev/null || true
     echo -e "  ${G}💾 Бэкап: $bak${N}\n"
@@ -916,27 +1580,46 @@ _full_uninstall() {
   read -rp "  Введите 'DELETE' для подтверждения: " confirm
   [[ "$confirm" != "DELETE" ]] && { echo -e "\n  Отменено."; sleep 2; return; }
   echo -e "\n  ${Y}🗑️  Удаляем...${N}\n"
-  systemctl stop hipr-mtg hipr-watchdog.timer 2>/dev/null || true
-  systemctl disable hipr-mtg hipr-watchdog.timer hipr-watchdog 2>/dev/null || true
-  rm -f /etc/systemd/system/hipr-mtg.service
-  rm -f /etc/systemd/system/hipr-watchdog.service
-  rm -f /etc/systemd/system/hipr-watchdog.timer
+
+  load_cfg; load_arrays
+  # Останавливаем все инстансы
+  if [[ "${MODE:-single}" == "multi" ]]; then
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      systemctl stop "hipr-mtg@${i}" 2>/dev/null || true
+      systemctl disable "hipr-mtg@${i}" 2>/dev/null || true
+    done
+    rm -f /etc/systemd/system/hipr-mtg@.service
+  else
+    systemctl stop hipr-mtg 2>/dev/null || true
+    systemctl disable hipr-mtg 2>/dev/null || true
+    rm -f /etc/systemd/system/hipr-mtg.service
+  fi
+
+  systemctl stop hipr-watchdog.timer dnsproxy prometheus grafana-server 2>/dev/null || true
+  systemctl disable hipr-watchdog.timer hipr-watchdog dnsproxy 2>/dev/null || true
+  rm -f /etc/systemd/system/hipr-watchdog.{service,timer}
+  rm -f /etc/systemd/system/dnsproxy.service
+  rm -f /etc/systemd/system/prometheus.service
   systemctl daemon-reload
-  echo -e "  ${G}✓${N} Сервисы удалены"
-  rm -f /etc/nginx/sites-enabled/hipr-{http,ssl,fallback}
-  rm -f /etc/nginx/sites-available/hipr-{http,ssl,fallback}
+  echo -e "  ${G}✓${N} Сервисы"
+
+  rm -f /etc/nginx/sites-{enabled,available}/hipr-{http,ssl,fallback,grafana}
   rm -f /etc/nginx/snippets/hipr-stream.conf
   rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
   sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf 2>/dev/null || true
   nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
-  echo -e "  ${G}✓${N} nginx конфиги удалены"
+  echo -e "  ${G}✓${N} nginx"
+
   rm -rf /opt/hipr /var/www/hipr /usr/local/bin/hide
-  echo -e "  ${G}✓${N} Файлы удалены"
-  crontab -l 2>/dev/null | grep -v certbot | crontab - 2>/dev/null || true
-  echo -e "  ${G}✓${N} Cron очищен"
+  rm -f /usr/local/bin/dnsproxy /usr/local/bin/prometheus /usr/local/bin/promtool
+  rm -f /etc/sysctl.d/99-hipr.conf
+  rm -f /etc/security/limits.d/hipr.conf
+  crontab -l 2>/dev/null | grep -v 'hipr\|certbot\|daily-report' | crontab - 2>/dev/null || true
+  killall -9 mtg 2>/dev/null || true
+  echo -e "  ${G}✓${N} Файлы"
+
   echo ""
   echo -e "  ${G}${BOLD}✅ HIPR полностью удалён${N}"
-  echo -e "  ${DIM}nginx и сертификаты Let's Encrypt сохранены${N}"
   echo ""
   exit 0
 }
@@ -946,39 +1629,58 @@ _full_uninstall() {
 # ══════════════════════════════════════════════════════════════════════════
 case "${1:-}" in
   status)
-    load_cfg
-    echo -e "$(svc_icon hipr-mtg)  hipr-mtg"
+    load_cfg; load_arrays
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      local svc; svc=$(mtg_svc $i)
+      echo -e "$(svc_icon $svc)  mtg@${i} (${SNI_DOMAINS_ARR[$i]})"
+    done
     echo -e "$(svc_icon nginx)  nginx"
-    echo -e "$(svc_icon hipr-watchdog.timer 2>/dev/null)  watchdog"
-    echo -e "🌐  Домен:  ${DOMAIN:-—}"
-    echo -e "📡  DC:     ${ACTIVE_DC:-—}"
-    echo -e "🎨  Тема:   $(active_theme)" ;;
-  logs)      tail -f "$LOG_MTG" 2>/dev/null ;;
-  restart)   systemctl restart hipr-mtg nginx; echo -e "${G}✅${N}" ;;
-  stop)      systemctl stop hipr-mtg; echo -e "${Y}⏹️${N}" ;;
-  start)     systemctl start hipr-mtg; echo -e "${G}▶️${N}" ;;
-  link)      load_cfg; echo "tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}" ;;
-  theme)     echo "$(active_theme)" ;;
-  qr)        load_cfg
-             qrencode -t ANSIUTF8 \
-               "https://t.me/proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRET}" \
-               2>/dev/null || echo "apt install qrencode" ;;
-  watchdog)  bash "$HIDE_DIR/bin/watchdog.sh" ;;
+    echo -e "$(svc_icon dnsproxy)  dnsproxy"
+    echo -e "$(svc_icon hipr-watchdog.timer)  watchdog"
+    echo -e "🌐  ${DOMAIN:-—}"
+    echo -e "📡  ${ACTIVE_DC:-—}"
+    echo -e "⚙️   ${MODE:-single}" ;;
+  links)
+    load_arrays
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      echo "tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRETS_ARR[$i]}"
+    done ;;
+  link)
+    load_arrays
+    echo "tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRETS_ARR[0]}" ;;
+  logs)
+    load_cfg
+    local log0="$HIDE_DIR/logs/mtg0.log"
+    tail -f "$log0" 2>/dev/null ;;
+  restart)  _mtg_action restart; systemctl reload nginx 2>/dev/null ;;
+  stop)     _mtg_action stop ;;
+  start)    _mtg_action start ;;
+  theme)    echo "$(active_theme)" ;;
+  sni)
+    load_arrays
+    for i in "${!SNI_DOMAINS_ARR[@]}"; do
+      echo "[$((i+1))] ${SNI_DOMAINS_ARR[$i]}"
+    done ;;
+  watchdog) bash "$HIDE_DIR/bin/watchdog.sh" ;;
+  report)   bash "$HIDE_DIR/bin/daily-report.sh" ;;
   uninstall) menu_uninstall ;;
+  optimize)  menu_optimize ;;
   help|--help|-h)
     echo -e "\n${BOLD}🛡️  HIPR CLI${N} v${VERSION}\n"
-    echo -e "  ${C}hide${N}             — интерактивное меню"
-    echo -e "  ${C}hide status${N}      — быстрый статус"
-    echo -e "  ${C}hide logs${N}        — live лог mtg"
-    echo -e "  ${C}hide link${N}        — ссылка tg://"
-    echo -e "  ${C}hide qr${N}          — QR-код"
-    echo -e "  ${C}hide theme${N}       — активная тема"
-    echo -e "  ${C}hide restart${N}     — перезапустить всё"
-    echo -e "  ${C}hide watchdog${N}    — запустить watchdog"
-    echo -e "  ${C}hide uninstall${N}   — удалить HIPR"
+    echo -e "  ${C}hide${N}              — интерактивное меню"
+    echo -e "  ${C}hide status${N}       — статус сервисов"
+    echo -e "  ${C}hide links${N}        — все ссылки tg://"
+    echo -e "  ${C}hide link${N}         — первая ссылка"
+    echo -e "  ${C}hide sni${N}          — список SNI доменов"
+    echo -e "  ${C}hide logs${N}         — live лог mtg"
+    echo -e "  ${C}hide restart${N}      — перезапустить всё"
+    echo -e "  ${C}hide watchdog${N}     — запустить watchdog"
+    echo -e "  ${C}hide report${N}       — отправить отчёт в бот"
+    echo -e "  ${C}hide optimize${N}     — меню оптимизации"
+    echo -e "  ${C}hide uninstall${N}    — удалить HIPR"
     echo "" ;;
   "")
     [[ $EUID -ne 0 ]] && echo -e "${Y}⚠️  Рекомендуется sudo${N}\n"
     main_menu ;;
-  *) echo -e "${R}❌ Неизвестная команда: $1${N}  →  hide help" ;;
+  *) echo -e "${R}❌ Неизвестно: $1${N}  →  hide help" ;;
 esac
