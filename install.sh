@@ -49,6 +49,57 @@ step "Проверка системы"
 
 [[ $EUID -ne 0 ]] && err "Нужен root:  sudo bash install.sh"
 
+# ── Детект повторной установки ────────────────────────────────────────────
+if [[ -f "/opt/hipr/config.env" || -f "/usr/local/bin/hide" ]]; then
+  echo -e "${Y}${BOLD}  ⚠️  Обнаружена существующая установка HIPR${N}\n"
+  source /opt/hipr/config.env 2>/dev/null || true
+  [[ -n "${DOMAIN:-}" ]] && echo -e "  ${DIM}Домен: $DOMAIN${N}"
+  [[ -n "${VERSION:-}" ]] && echo -e "  ${DIM}Версия: $VERSION${N}"
+  echo ""
+  echo -e "  ${W}[1]${N}  🔄  Переустановить (очистить всё и установить заново)"
+  echo -e "  ${W}[2]${N}  🚪  Отмена"
+  echo ""
+  read -rp "  Выберите: " REINSTALL_CHOICE
+
+  if [[ "${REINSTALL_CHOICE}" != "1" ]]; then
+    echo -e "\n  Отменено. Для управления используйте: ${W}hide${N}"
+    exit 0
+  fi
+
+  # Предлагаем бэкап
+  echo ""
+  read -rp "  💾 Сохранить бэкап конфига и ключей перед удалением? [Y/n]: " DO_BACKUP
+  if [[ "${DO_BACKUP,,}" != "n" ]]; then
+    BAK_DIR="/root/hipr_backup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$BAK_DIR"
+    [[ -f "/opt/hipr/config.env" ]]              && cp /opt/hipr/config.env "$BAK_DIR/"
+    [[ -f "/opt/hipr/config/mtg.toml" ]]         && cp /opt/hipr/config/mtg.toml "$BAK_DIR/"
+    [[ -d "/opt/hipr/themes/custom" ]]            && cp -r /opt/hipr/themes/custom "$BAK_DIR/" 2>/dev/null || true
+    cp -r /etc/letsencrypt/live "$BAK_DIR/letsencrypt" 2>/dev/null || true
+    echo -e "  ${G}✅ Бэкап сохранён: ${W}$BAK_DIR${N}"
+  fi
+
+  # Полная очистка
+  echo -e "\n  ${Y}🗑️  Удаляем старую установку...${N}"
+  systemctl stop hipr-mtg hipr-watchdog.timer 2>/dev/null || true
+  systemctl disable hipr-mtg hipr-watchdog.timer hipr-watchdog 2>/dev/null || true
+  rm -f /etc/systemd/system/hipr-mtg.service
+  rm -f /etc/systemd/system/hipr-watchdog.service
+  rm -f /etc/systemd/system/hipr-watchdog.timer
+  systemctl daemon-reload
+  rm -f /etc/nginx/sites-enabled/hipr-{http,ssl,fallback}
+  rm -f /etc/nginx/sites-available/hipr-{http,ssl,fallback}
+  rm -f /etc/nginx/snippets/hipr-stream.conf
+  rm -f /etc/nginx/modules-enabled/60-mod-hipr-stream.conf
+  sed -i '/hipr-stream\.conf/d' /etc/nginx/nginx.conf 2>/dev/null || true
+  nginx -t 2>/dev/null && systemctl reload nginx 2>/dev/null || true
+  rm -rf /opt/hipr /usr/local/bin/hide /var/www/hipr
+  crontab -l 2>/dev/null | grep -v certbot | crontab - 2>/dev/null || true
+  echo -e "  ${G}✅ Очищено — начинаем установку заново${N}"
+  echo ""
+  sleep 1
+fi
+
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)  MTG_ARCH="amd64" ;;
@@ -143,10 +194,10 @@ options rotate
 EOF
 ok "DNS: resolv.conf настроен (1.1.1.1, 8.8.8.8 + хостер)"
 # Проверяем
-if dig telegram.org +short +time=3 > /dev/null 2>&1; then
-  ok "DNS: telegram.org резолвится"
+if dig microsoft.com +short +time=3 > /dev/null 2>&1; then
+  ok "DNS: microsoft.com резолвится"
 else
-  warn "DNS: telegram.org не резолвится — mtg не сможет установить FakeTLS"
+  warn "DNS: microsoft.com не резолвится — mtg не сможет установить FakeTLS"
 fi
 done_step
 
@@ -699,11 +750,11 @@ else
 fi
 
 # Генерируем секрет через mtg
-# ВАЖНО: фронтинг-домен должен быть ВНЕШНИМ сайтом (telegram.org).
+# ВАЖНО: фронтинг-домен должен быть ВНЕШНИМ сайтом (microsoft.com).
 # Если использовать собственный домен — mtg при каждом соединении будет
 # пытаться подключиться к нему на порт 443, попадёт в nginx stream → себя же → петля.
-info "Генерируем секрет FakeTLS (fronting: telegram.org)..."
-MTG_SECRET=$("$MTG_BIN" generate-secret --hex "telegram.org" 2>/dev/null | tr -d '\n')
+info "Генерируем секрет FakeTLS (fronting: microsoft.com)..."
+MTG_SECRET=$("$MTG_BIN" generate-secret --hex "microsoft.com" 2>/dev/null | tr -d '\n')
 
 if [[ -z "$MTG_SECRET" ]]; then
   # Fallback генерация если команда не сработала
@@ -848,13 +899,13 @@ EOF
     ln -sf /etc/nginx/sites-available/hipr-ssl /etc/nginx/sites-enabled/
 
     # nginx stream: SNI-роутинг по фронтинг-домену
-    # Telegram-клиент → SNI=telegram.org → mtg:2398
+    # Telegram-клиент → SNI=microsoft.com → mtg:2398
     # Браузер/ТСПУ  → SNI=домена → nginx:8443 (сайт-обманка)
     mkdir -p /etc/nginx/snippets
     cat > /etc/nginx/snippets/hipr-stream.conf << 'STREAMEOF'
 stream {
     map $ssl_preread_server_name $hipr_backend {
-        telegram.org    127.0.0.1:2398;
+        microsoft.com   127.0.0.1:2398;
         default         127.0.0.1:8443;
     }
 
@@ -905,7 +956,7 @@ source "$CONFIG_FILE"
 
 # Конфиг для mtg v2
 # mtg использует собственный DNS-резолвер (игнорирует /etc/resolv.conf).
-# Явно задаём DoH-серверы чтобы FakeTLS-рукопожатие с telegram.org работало.
+# Явно задаём DoH-серверы чтобы FakeTLS-рукопожатие с microsoft.com работало.
 cat > "$HIDE_DIR/config/mtg.toml" << EOF
 # HIPR — mtg конфигурация
 # Документация: https://github.com/9seconds/mtg
@@ -914,12 +965,19 @@ secret = "$MTG_SECRET"
 
 bind-to = "127.0.0.1:$MTG_PORT"
 
+# info — логирует соединения (нужно для статистики)
+log-level = "info"
+
 [network]
   [network.doh]
     endpoints = [
-      "https://1.1.1.1/dns-query",
-      "https://8.8.8.8/dns-query"
+      "https://8.8.8.8/dns-query",
+      "https://1.1.1.1/dns-query"
     ]
+
+  [network.tls]
+    # Предпочитаем TLS 1.3 — меньше отличительных признаков
+    prefer-tls-version = "tls13"
 
 # Telegram DC — меняется через hide → Настройки → Сменить DC
 [upstream]
