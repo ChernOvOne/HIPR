@@ -1867,11 +1867,11 @@ HOUR_AGO=$(date -d '1 hour ago' '+%d/%b/%Y:%H:%M' 2>/dev/null)
 TEN_MIN_AGO=$(date -d '10 minutes ago' '+%d/%b/%Y:%H:%M' 2>/dev/null)
 
 # Уникальные IP (только реальные соединения к mtg, код 200)
-UNIQUE_TOTAL=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
-UNIQUE_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
-UNIQUE_1H=$(awk -v d="$HOUR_AGO" '$0 > d && $7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
-UNIQUE_10M=$(awk -v d="$TEN_MIN_AGO" '$0 > d && $7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
-CONN_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$7 ~ /2[34][0-9][0-9]/' | wc -l)
+UNIQUE_TOTAL=$(awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+UNIQUE_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+UNIQUE_1H=$(awk -v d="$HOUR_AGO" '$0 > d && $9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+UNIQUE_10M=$(awk -v d="$TEN_MIN_AGO" '$0 > d && $9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+CONN_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/' | wc -l)
 
 cat > "$OUT" << EOF
 # HELP hipr_unique_clients_total Total unique client IPs ever
@@ -1960,8 +1960,8 @@ TODAY=$(date '+%d/%b/%Y')
 UNIQUE_TODAY=0
 UNIQUE_TOTAL=0
 if [[ -f "$STREAM_LOG" ]]; then
-  UNIQUE_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
-  UNIQUE_TOTAL=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+  UNIQUE_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+  UNIQUE_TOTAL=$(awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
 fi
 
 # Пиковые/средние значения за 24ч через Prometheus API
