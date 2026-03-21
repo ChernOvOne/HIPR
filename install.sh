@@ -1469,6 +1469,11 @@ serve_from_sub_path = $GF_SERVE_SUBPATH
 [security]
 admin_user = admin
 admin_password = $GRAFANA_PASS
+disable_brute_force_login_protection = true
+
+[auth]
+login_maximum_inactive_lifetime_days = 30
+login_maximum_lifetime_days = 365
 
 [auth.anonymous]
 enabled = false
