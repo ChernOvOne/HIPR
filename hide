@@ -319,16 +319,21 @@ menu_monitor() {
     local cpu_cores; cpu_cores=$(nproc 2>/dev/null || echo 1)
     local mem_used; mem_used=$(free -m | awk '/Mem:/{print $3}')
     local mem_total; mem_total=$(free -m | awk '/Mem:/{print $2}')
-    local mem_pct; mem_pct=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
+    local mem_pct; mem_pct=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}' | tr -d '[:space:]')
+    mem_pct="${mem_pct//[^0-9]/}"; mem_pct="${mem_pct:-0}"
     local disk_used; disk_used=$(df -h / | awk 'NR==2{print $3}')
     local disk_total; disk_total=$(df -h / | awk 'NR==2{print $2}')
-    local disk_pct; disk_pct=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+    local disk_pct; disk_pct=$(df / | awk 'NR==2{print $5}' | tr -d '%[:space:]')
+    disk_pct="${disk_pct//[^0-9]/}"; disk_pct="${disk_pct:-0}"
     local uptime_str; uptime_str=$(uptime -p 2>/dev/null | sed 's/up //' || uptime | awk '{print $3}' | tr -d ',')
 
     # Цветовая индикация нагрузки
     local cpu_color="$G"
-    (( $(echo "$cpu_load $cpu_cores" | awk '{printf "%d", $1/$2*100}') > 80 )) && cpu_color="$R"
-    (( $(echo "$cpu_load $cpu_cores" | awk '{printf "%d", $1/$2*100}') > 50 )) && cpu_color="$Y"
+    local cpu_pct; cpu_pct=$(echo "$cpu_load $cpu_cores" | awk '{printf "%d", $1/$2*100}' 2>/dev/null || echo 0)
+    cpu_pct="${cpu_pct//[^0-9]/}"
+    cpu_pct="${cpu_pct:-0}"
+    [[ "$cpu_pct" -gt 80 ]] 2>/dev/null && cpu_color="$R"
+    [[ "$cpu_pct" -gt 50 && "$cpu_pct" -le 80 ]] 2>/dev/null && cpu_color="$Y"
 
     kv "💻 CPU load:" "${cpu_load} (${cpu_cores} ядер)"
     kv "💾 RAM:" "${mem_used}/${mem_total} MB (${mem_pct}%)"
@@ -442,7 +447,8 @@ _system_diag() {
   fi
 
   # RAM
-  local mem_pct; mem_pct=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
+  local mem_pct; mem_pct=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}' | tr -d '[:space:]')
+  mem_pct="${mem_pct//[^0-9]/}"; mem_pct="${mem_pct:-0}"
   if [[ "$mem_pct" -gt 90 ]]; then
     echo -e "  ${R}✗${N} RAM: ${mem_pct}% занято — критично"
     ((issues++))
@@ -453,7 +459,8 @@ _system_diag() {
   fi
 
   # Disk
-  local disk_pct; disk_pct=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+  local disk_pct; disk_pct=$(df / | awk 'NR==2{print $5}' | tr -d '%[:space:]')
+  disk_pct="${disk_pct//[^0-9]/}"; disk_pct="${disk_pct:-0}"
   if [[ "$disk_pct" -gt 90 ]]; then
     echo -e "  ${R}✗${N} Диск: ${disk_pct}% занято — критично"
     ((issues++))
@@ -2300,8 +2307,9 @@ menu_notifications() {
     if [[ -n "${BOT_TOKEN:-}" ]]; then
       kv "💬 Chat ID:" "${BOT_CHAT_ID:-—}"
       # Дополнительные каналы
-      local extra_count; extra_count=$(grep -c '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null || echo 0)
-      [[ "$extra_count" -gt 0 ]] && kv "➕ Доп. каналы:" "$extra_count"
+      local extra_count; extra_count=$(grep -c '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null | tr -d '[:space:]' || echo 0)
+      extra_count="${extra_count:-0}"
+      [[ "${extra_count}" =~ ^[0-9]+$ && "${extra_count}" -gt 0 ]] && kv "➕ Доп. каналы:" "$extra_count"
     fi
     # Пороги уведомлений
     local alert_cpu; alert_cpu=$(grep '^ALERT_CPU=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
