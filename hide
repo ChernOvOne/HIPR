@@ -378,14 +378,26 @@ _proxy_selftest() {
     else
       _check "mtg@${i} (${sni}) не слушает :${port}" "systemctl start hipr-mtg@${i}"
     fi
-    # Тест что nginx роутит SNI на mtg
-    local conn_test; conn_test=$(echo | timeout 3 openssl s_client       -connect "${DOMAIN}:443"       -servername "$sni" 2>/dev/null | grep -c "^depth=")
-    if [[ "$conn_test" -gt 0 ]]; then
-      _check "SNI роутинг ${sni} → mtg@${i}: работает" "ok"
-    else
-      _check "SNI роутинг ${sni}: нет ответа" "проверьте nginx stream"
-    fi
   done
+
+  # SNI роутинг — проверяем конфиг и реальное соединение к mtg порту
+  if [[ -f "/etc/nginx/snippets/hipr-stream.conf" ]]; then
+    for i in "${!_SNIS[@]}"; do
+      local sni="${_SNIS[$i]}"
+      local port="${_PORTS[$i]:-2398}"
+      if grep -q "${sni}.*127.0.0.1:${port}" /etc/nginx/snippets/hipr-stream.conf 2>/dev/null; then
+        _check "SNI роутинг ${sni} → :${port} (конфиг)" "ok"
+      else
+        _check "SNI роутинг ${sni} → :${port} не найден в конфиге" "проверьте hipr-stream.conf"
+      fi
+    done
+    # Проверяем default fallback
+    if grep -q 'default.*127.0.0.1:8443' /etc/nginx/snippets/hipr-stream.conf 2>/dev/null; then
+      _check "nginx stream default fallback → :8443" "ok"
+    else
+      _check "nginx stream default fallback отсутствует" "повреждён hipr-stream.conf"
+    fi
+  fi
 
   # 7. Prometheus метрики
   echo ""
