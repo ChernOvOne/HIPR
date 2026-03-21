@@ -258,36 +258,32 @@ main_menu() {
     if [[ "$_first_run" == "true" ]]; then
       _first_run=false
       load_cfg
-      # Автодиагностика только если установка завершена
       if [[ -f "/opt/hipr/config.env" && -n "${DOMAIN:-}" ]]; then
         _autocheck
       fi
     fi
     draw_header
     echo -e "  ${BOLD}${W}Главное меню${N}\n"
-    echo -e "  ${C}[1]${N}  📊  Статус и мониторинг"
-    echo -e "  ${C}[2]${N}  🔗  Ссылки для Telegram + QR"
-    echo -e "  ${C}[3]${N}  🎨  Темы сайта-обманки"
-    echo -e "  ${C}[4]${N}  ⚙️   Управление сервисами"
-    echo -e "  ${C}[5]${N}  📋  Логи и статистика"
-    echo -e "  ${C}[6]${N}  🔧  Настройки и SNI"
+    echo -e "  ${C}[1]${N}  📊  Мониторинг и статус"
+    echo -e "  ${C}[2]${N}  🔗  Прокси и подключения"
+    echo -e "  ${C}[3]${N}  ⚙️   Управление сервисами"
+    echo -e "  ${C}[4]${N}  🔧  Настройки"
+    echo -e "  ${C}[5]${N}  🔔  Уведомления и бот"
+    echo -e "  ${C}[6]${N}  🎨  Темы сайта-обманки"
     echo -e "  ${C}[7]${N}  🔄  Обновление"
-    echo -e "  ${C}[8]${N}  🚀  Оптимизация сервера (BBR)"
     echo ""
     echo -e "  ${R}[9]${N}  🗑️   Удалить / Переустановить"
-    echo ""
     echo -e "  ${DIM}[0]${N}  🚪  Выход"
     echo ""
     read -rp "  Выберите [0-9]: " ch
     case "$ch" in
-      1) menu_status ;;
-      2) menu_links ;;
-      3) menu_themes ;;
-      4) menu_services ;;
-      5) menu_logs ;;
-      6) menu_settings ;;
+      1) menu_monitor ;;
+      2) menu_proxy ;;
+      3) menu_services ;;
+      4) menu_settings ;;
+      5) menu_notifications ;;
+      6) menu_themes ;;
       7) menu_update ;;
-      8) menu_optimize ;;
       9) menu_uninstall ;;
       0|q|Q) echo ""; exit 0 ;;
       *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
@@ -296,7 +292,226 @@ main_menu() {
 }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 1. СТАТУС
+# 1. МОНИТОРИНГ И СТАТУС
+# ══════════════════════════════════════════════════════════════════════════
+menu_monitor() {
+  while true; do
+    load_cfg; get_stats; load_arrays; clear; echo ""
+    top_b
+    printf "${B}  ║${N}  ${BOLD}📊 %-53s${N}${B}║${N}\n" "Мониторинг и статус"
+    sep
+
+    # Сервисы
+    if [[ "${MODE:-single}" == "multi" ]]; then
+      for i in "${!SNI_DOMAINS_ARR[@]}"; do
+        printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n"           "mtg@${i} (${SNI_DOMAINS_ARR[$i]})" "$(svc_status "hipr-mtg@${i}")"
+      done
+    else
+      printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n" "hipr-mtg" "$(svc_status hipr-mtg)"
+    fi
+    for s in nginx dnsproxy; do
+      printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n" "$s" "$(svc_status $s)"
+    done
+    sep
+
+    # Системные ресурсы
+    local cpu_load; cpu_load=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
+    local cpu_cores; cpu_cores=$(nproc 2>/dev/null || echo 1)
+    local mem_used; mem_used=$(free -m | awk '/Mem:/{print $3}')
+    local mem_total; mem_total=$(free -m | awk '/Mem:/{print $2}')
+    local mem_pct; mem_pct=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
+    local disk_used; disk_used=$(df -h / | awk 'NR==2{print $3}')
+    local disk_total; disk_total=$(df -h / | awk 'NR==2{print $2}')
+    local disk_pct; disk_pct=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+    local uptime_str; uptime_str=$(uptime -p 2>/dev/null | sed 's/up //' || uptime | awk '{print $3}' | tr -d ',')
+
+    # Цветовая индикация нагрузки
+    local cpu_color="$G"
+    (( $(echo "$cpu_load $cpu_cores" | awk '{printf "%d", $1/$2*100}') > 80 )) && cpu_color="$R"
+    (( $(echo "$cpu_load $cpu_cores" | awk '{printf "%d", $1/$2*100}') > 50 )) && cpu_color="$Y"
+
+    kv "💻 CPU load:" "${cpu_load} (${cpu_cores} ядер)"
+    kv "💾 RAM:" "${mem_used}/${mem_total} MB (${mem_pct}%)"
+    kv "💿 Диск:" "${disk_used}/${disk_total} (${disk_pct}%)"
+    kv "⏱️  Uptime:" "$uptime_str"
+    sep
+
+    # Статистика прокси
+    local ESTIMATED_USERS=$(( STAT_ACTIVE > 0 ? (STAT_ACTIVE + 3) / 4 : 0 ))
+    kv "🟢 ~Пользователей:" "$ESTIMATED_USERS сейчас"
+    kv "📡 TCP соединений:" "$STAT_ACTIVE активных"
+    kv "📦 Трафик (total):" "$STAT_BYTES_FMT"
+    kv "🛡️  Replay атак:" "$STAT_REPLAYS"
+    kv "🎭 FakeTLS:" "$STAT_FRONTING handshakes"
+    local ce; ce=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}"       | grep "Expiry" | awk '{print $3,$4}' | head -1)
+    kv "🔒 Сертификат:" "${ce:-—}"
+    sep
+
+    # Статистика по инстансам
+    if [[ "${MODE:-single}" == "multi" ]]; then
+      IFS='|' read -ra _PPORTS <<< "${MTG_PROM_PORTS:-3129}"
+      IFS='|' read -ra _SNIS_M <<< "${SNI_DOMAINS:-}"
+      for i in "${!_PPORTS[@]}"; do
+        local inst_conn; inst_conn=$(curl -sf --max-time 2           "http://127.0.0.1:${_PPORTS[$i]}/metrics" 2>/dev/null |           grep '^mtg_client_connections{' | awk '{sum+=$2} END{print int(sum)+0}')
+        local inst_users=$(( inst_conn > 0 ? (inst_conn+3)/4 : 0 ))
+        kv "  [${i}] ${_SNIS_M[$i]:-?}:" "~${inst_users} польз / ${inst_conn} conn"
+      done
+      sep
+    fi
+
+    kv "🌐 Домен:" "${DOMAIN:-—}"
+    kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
+    row ""; bot_b; echo ""
+
+    echo -e "  ${C}[r]${N} Обновить  ${C}[t]${N} Тест DC  ${C}[p]${N} Пинг прокси  ${C}[s]${N} Диагностика сети  ${C}[d]${N} Диагностика системы  ${R}[0]${N} Назад"
+    echo ""
+    read -rp "  " ch
+    case "$ch" in
+      r|R) continue ;;
+      t|T) _check_all_dc ;;
+      p|P) _ping_proxy ;;
+      s|S) _speed_test ;;
+      d|D) _system_diag ;;
+      0|q) return ;;
+    esac
+  done
+}
+
+_system_diag() {
+  clear; echo ""
+  echo -e "  ${BOLD}🔍 Диагностика системы HIPR${N}\n"
+  local issues=0
+
+  # IPv6 / SYN-SENT
+  local syn_count; syn_count=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
+  if [[ "$syn_count" -gt 5 ]]; then
+    echo -e "  ${R}✗${N} IPv6 SYN-SENT: $syn_count зависших (mtg не может достучаться до Telegram)"
+    echo -e "     ${DIM}→ Исправить: Настройки → Сеть → IPv6${N}"
+    ((issues++))
+  else
+    echo -e "  ${G}✓${N} IPv6/SYN-SENT: норма ($syn_count)"
+  fi
+
+  # Сертификат
+  if [[ -f "/etc/letsencrypt/live/${DOMAIN:-_}/fullchain.pem" ]]; then
+    local exp; exp=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}" | grep Expiry | awk '{print $3}')
+    echo -e "  ${G}✓${N} TLS сертификат: действителен до $exp"
+  else
+    echo -e "  ${R}✗${N} TLS сертификат: отсутствует"
+    echo -e "     ${DIM}→ Исправить: Настройки → Сеть → Обновить TLS${N}"
+    ((issues++))
+  fi
+
+  # Stream конфиг
+  if [[ -f "/etc/nginx/snippets/hipr-stream.conf" ]]; then
+    echo -e "  ${G}✓${N} nginx stream конфиг: найден"
+  else
+    echo -e "  ${R}✗${N} nginx stream конфиг: отсутствует (порт 443 не роутит на mtg)"
+    ((issues++))
+  fi
+
+  # nginx порт 443
+  if ss -tlnp 2>/dev/null | grep -q '0.0.0.0:443'; then
+    echo -e "  ${G}✓${N} nginx: слушает порт 443"
+  else
+    echo -e "  ${R}✗${N} nginx: порт 443 не слушается"
+    ((issues++))
+  fi
+
+  # mtg процессы
+  local mtg_count; mtg_count=$(pgrep -x mtg | wc -l)
+  if [[ "$mtg_count" -gt 0 ]]; then
+    echo -e "  ${G}✓${N} mtg: $mtg_count процессов запущено"
+  else
+    echo -e "  ${R}✗${N} mtg: нет запущенных процессов"
+    ((issues++))
+  fi
+
+  # Telegram DC доступность
+  local dc_ok=0; local dc_fail=0
+  for dc in "149.154.175.50" "149.154.167.51" "149.154.175.100" "149.154.167.91" "91.108.56.130"; do
+    timeout 3 bash -c "echo '' > /dev/tcp/$dc/443" 2>/dev/null && ((dc_ok++)) || ((dc_fail++))
+  done
+  if [[ "$dc_fail" -eq 0 ]]; then
+    echo -e "  ${G}✓${N} Telegram DC: все 5 доступны"
+  elif [[ "$dc_ok" -gt 0 ]]; then
+    echo -e "  ${Y}⚠${N} Telegram DC: $dc_ok/5 доступны"
+  else
+    echo -e "  ${R}✗${N} Telegram DC: все недоступны!"
+    ((issues++))
+  fi
+
+  # RAM
+  local mem_pct; mem_pct=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
+  if [[ "$mem_pct" -gt 90 ]]; then
+    echo -e "  ${R}✗${N} RAM: ${mem_pct}% занято — критично"
+    ((issues++))
+  elif [[ "$mem_pct" -gt 75 ]]; then
+    echo -e "  ${Y}⚠${N} RAM: ${mem_pct}% занято — высокое"
+  else
+    echo -e "  ${G}✓${N} RAM: ${mem_pct}% занято"
+  fi
+
+  # Disk
+  local disk_pct; disk_pct=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+  if [[ "$disk_pct" -gt 90 ]]; then
+    echo -e "  ${R}✗${N} Диск: ${disk_pct}% занято — критично"
+    ((issues++))
+  elif [[ "$disk_pct" -gt 75 ]]; then
+    echo -e "  ${Y}⚠${N} Диск: ${disk_pct}% занято — высокое"
+  else
+    echo -e "  ${G}✓${N} Диск: ${disk_pct}% занято"
+  fi
+
+  echo ""
+  if [[ "$issues" -eq 0 ]]; then
+    echo -e "  ${G}${BOLD}✅ Всё в порядке${N}"
+  else
+    echo -e "  ${R}${BOLD}Обнаружено проблем: $issues${N}"
+  fi
+  echo ""; pause
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2. ПРОКСИ И ПОДКЛЮЧЕНИЯ
+# ══════════════════════════════════════════════════════════════════════════
+menu_proxy() {
+  while true; do
+    load_cfg; load_arrays; clear; echo ""
+    top_b
+    printf "${B}  ║${N}  ${BOLD}🔗 %-53s${N}${B}║${N}\n" "Прокси и подключения"
+    sep
+    kv "🌐 Домен:" "${DOMAIN:-—}"
+    kv "⚙️  Режим:" "${MODE:-single}"
+    kv "🔑 SNI домен(ы):" "$(IFS=', '; echo "${SNI_DOMAINS_ARR[*]}")"
+    kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
+    bot_b; echo ""
+
+    echo -e "  ${C}[1]${N}  🔗  Показать ссылки + QR"
+    echo -e "  ${C}[2]${N}  🔑  Управление SNI и секретами"
+    echo -e "  ${C}[3]${N}  📡  Сменить Telegram DC"
+    echo -e "  ${C}[4]${N}  🔄  Сменить режим (single ↔ multi)"
+    echo -e "  ${C}[5]${N}  📋  Проверить все DC"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+    read -rp "  Выберите: " ch
+    case "$ch" in
+      1) menu_links ;;
+      2)
+        if [[ "${MODE:-single}" == "single" ]]; then
+          _change_sni_single
+        else
+          _manage_multi_fronting
+        fi ;;
+      3) _change_dc ;;
+      4) _switch_mode ;;
+      5) _check_all_dc ;;
+      0|q) return ;;
+    esac
+  done
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# (старый menu_status сохранён как внутренний)
 # ══════════════════════════════════════════════════════════════════════════
 menu_status() {
   while true; do
@@ -1268,7 +1483,7 @@ _grafana_menu() {
           -d '{"name":"Prometheus","type":"prometheus","url":"http://127.0.0.1:9090","access":"proxy","isDefault":true}' \
           > /dev/null 2>&1 || true
         local DASH_JSON
-        DASH_JSON='{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"10s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"title":"TCP соединений","type":"stat","gridPos":{"x":0,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"соединений"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"~Реальных пользователей","type":"stat","gridPos":{"x":6,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"юзеров"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"Соединений к Telegram","type":"stat","gridPos":{"x":12,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":18,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":5,"title":"Соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":24,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"},{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":6,"title":"Трафик","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"байт/сек"}],"fieldConfig":{"defaults":{"unit":"binBps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_domain_fronting[2m]))","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":8,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":0,"y":20,"w":24,"h":6},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}}]},"overwrite":true,"folderId":0}'
+        DASH_JSON='{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"30s","time":{"from":"now-6h","to":"now"},"panels":[{"id":1,"title":"Онлайн пользователей","type":"stat","gridPos":{"x":0,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"польз."}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"TCP соединений","type":"stat","gridPos":{"x":4,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"conn"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"→ Telegram","type":"stat","gridPos":{"x":8,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":12,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":9,"title":"Трафик сейчас","type":"stat","gridPos":{"x":16,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[5m]))","legendFormat":"байт/с"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"unit":"Bps","color":{"mode":"fixed","fixedColor":"purple"}}}},{"id":10,"title":"FakeTLS","type":"stat","gridPos":{"x":20,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_domain_fronting)","legendFormat":"всего"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"semi-dark-blue"}}}},{"id":5,"title":"Пользователи и соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":16,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"},{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":11,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":16,"y":4,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}},{"id":6,"title":"Трафик (байт/сек)","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"исходящий"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[2m]))","legendFormat":"входящий"}],"fieldConfig":{"defaults":{"unit":"Bps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes/сек","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_domain_fronting[2m]))","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}}]},"overwrite":true,"folderId":0}'
         local res
         res=$(curl -sf --max-time 15 \
           -X POST http://127.0.0.1:3000/api/dashboards/import \
@@ -2070,6 +2285,182 @@ _switch_mode() {
     echo -e "\n  ${Y}→${N}  Запустите: sudo bash install.sh для полной настройки"
   fi
   sleep 2
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# УВЕДОМЛЕНИЯ И БОТ
+# ══════════════════════════════════════════════════════════════════════════
+menu_notifications() {
+  while true; do
+    load_cfg; clear; echo ""
+    top_b
+    printf "${B}  ║${N}  ${BOLD}🔔 %-53s${N}${B}║${N}\n" "Уведомления и бот"
+    sep
+    kv "🤖 Бот:" "$( [[ -n "${BOT_TOKEN:-}" ]] && echo '✅ настроен' || echo '➖ не настроен' )"
+    if [[ -n "${BOT_TOKEN:-}" ]]; then
+      kv "💬 Chat ID:" "${BOT_CHAT_ID:-—}"
+      # Дополнительные каналы
+      local extra_count; extra_count=$(grep -c '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null || echo 0)
+      [[ "$extra_count" -gt 0 ]] && kv "➕ Доп. каналы:" "$extra_count"
+    fi
+    # Пороги уведомлений
+    local alert_cpu; alert_cpu=$(grep '^ALERT_CPU=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+    local alert_ram; alert_ram=$(grep '^ALERT_RAM=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+    local alert_disk; alert_disk=$(grep '^ALERT_DISK=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+    kv "⚠️  CPU порог:" "${alert_cpu:-80}%"
+    kv "⚠️  RAM порог:" "${alert_ram:-85}%"
+    kv "⚠️  Диск порог:" "${alert_disk:-90}%"
+    bot_b; echo ""
+
+    echo -e "  ${C}[1]${N}  🤖  Настроить основной бот"
+    echo -e "  ${C}[2]${N}  ➕  Добавить канал уведомлений"
+    echo -e "  ${C}[3]${N}  📋  Список каналов"
+    echo -e "  ${C}[4]${N}  ⚙️   Настройки порогов алертов"
+    echo -e "  ${C}[5]${N}  📨  Отправить тестовое уведомление"
+    echo -e "  ${C}[6]${N}  📊  Отправить отчёт сейчас"
+    echo -e "  ${C}[7]${N}  🕐  Настроить расписание отчётов"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+    read -rp "  Выберите: " ch
+    case "$ch" in
+      1) _setup_bot ;;
+      2) _add_notify_channel ;;
+      3) _list_notify_channels ;;
+      4) _setup_alert_thresholds ;;
+      5) _send_test_notify ;;
+      6) bash "$HIDE_DIR/bin/daily-report.sh" && echo -e "
+  ${G}✅ Отчёт отправлен${N}"; sleep 2 ;;
+      7) _setup_report_schedule ;;
+      0|q) return ;;
+    esac
+  done
+}
+
+_add_notify_channel() {
+  load_cfg; clear; echo ""
+  echo -e "  ${BOLD}➕ Добавить канал уведомлений${N}\n"
+  echo -e "  ${DIM}Уведомления будут дублироваться во все настроенные каналы${N}\n"
+  read -rp "  Bot Token: " new_token
+  [[ -z "$new_token" ]] && { echo "  Отменено."; sleep 1; return; }
+  read -rp "  Chat ID: " new_chat
+  [[ -z "$new_chat" ]] && { echo "  Отменено."; sleep 1; return; }
+  read -rp "  Название канала (напр. 'Личный', 'Группа'): " ch_name
+  ch_name="${ch_name:-Канал}"
+
+  # Проверяем
+  local test_res; test_res=$(curl -sf --max-time 5     "https://api.telegram.org/bot${new_token}/sendMessage"     -d "chat_id=${new_chat}" -d "text=✅ HIPR: канал ${ch_name} подключён" 2>/dev/null)
+  if echo "$test_res" | grep -q '"ok":true'; then
+    # Сохраняем как NOTIFY_EXTRA_N
+    local idx; idx=$(grep -c '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null || echo 0)
+    echo "NOTIFY_EXTRA_${idx}="${new_token}|${new_chat}|${ch_name}"" >> "$CONFIG_FILE"
+    echo -e "
+  ${G}✅ Канал '${ch_name}' добавлен${N}"
+  else
+    echo -e "
+  ${R}❌ Не удалось отправить тестовое сообщение — проверьте токен и chat_id${N}"
+  fi
+  sleep 2
+}
+
+_list_notify_channels() {
+  load_cfg; clear; echo ""
+  echo -e "  ${BOLD}📋 Каналы уведомлений${N}\n"
+  if [[ -n "${BOT_TOKEN:-}" ]]; then
+    echo -e "  ${G}[0]${N} Основной: chat_id=${BOT_CHAT_ID:-—}"
+  fi
+  local i=0
+  while IFS= read -r line; do
+    local token; token=$(echo "$line" | cut -d'|' -f1)
+    local chat; chat=$(echo "$line" | cut -d'|' -f2)
+    local name; name=$(echo "$line" | cut -d'|' -f3)
+    ((i++))
+    echo -e "  ${C}[$i]${N} ${name}: chat_id=${chat}"
+  done < <(grep '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+  [[ $i -eq 0 && -z "${BOT_TOKEN:-}" ]] && echo -e "  ${DIM}Каналы не настроены${N}"
+  echo ""; pause
+}
+
+_setup_alert_thresholds() {
+  load_cfg; clear; echo ""
+  echo -e "  ${BOLD}⚙️  Настройка порогов алертов${N}\n"
+  echo -e "  ${DIM}При превышении порога watchdog отправит уведомление${N}\n"
+
+  local cur_cpu; cur_cpu=$(grep '^ALERT_CPU=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2 || echo "80")
+  local cur_ram; cur_ram=$(grep '^ALERT_RAM=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2 || echo "85")
+  local cur_disk; cur_disk=$(grep '^ALERT_DISK=' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2 || echo "90")
+
+  read -rp "  CPU порог % [текущий: ${cur_cpu:-80}, Enter=пропустить]: " new_cpu
+  read -rp "  RAM порог % [текущий: ${cur_ram:-85}, Enter=пропустить]: " new_ram
+  read -rp "  Диск порог % [текущий: ${cur_disk:-90}, Enter=пропустить]: " new_disk
+
+  [[ -n "$new_cpu" ]] && {
+    grep -q '^ALERT_CPU=' "$CONFIG_FILE"       && sed -i "s/^ALERT_CPU=.*/ALERT_CPU="${new_cpu}"/" "$CONFIG_FILE"       || echo "ALERT_CPU="${new_cpu}"" >> "$CONFIG_FILE"
+  }
+  [[ -n "$new_ram" ]] && {
+    grep -q '^ALERT_RAM=' "$CONFIG_FILE"       && sed -i "s/^ALERT_RAM=.*/ALERT_RAM="${new_ram}"/" "$CONFIG_FILE"       || echo "ALERT_RAM="${new_ram}"" >> "$CONFIG_FILE"
+  }
+  [[ -n "$new_disk" ]] && {
+    grep -q '^ALERT_DISK=' "$CONFIG_FILE"       && sed -i "s/^ALERT_DISK=.*/ALERT_DISK="${new_disk}"/" "$CONFIG_FILE"       || echo "ALERT_DISK="${new_disk}"" >> "$CONFIG_FILE"
+  }
+  echo -e "
+  ${G}✅ Пороги сохранены${N}"; sleep 2
+}
+
+_send_test_notify() {
+  load_cfg; echo ""
+  local msg="🧪 <b>HIPR тест</b>
+
+✅ Уведомления работают!
+🌐 Домен: ${DOMAIN}
+📡 DC: ${ACTIVE_DC}
+⏱️ Время: $(date '+%d.%m.%Y %H:%M:%S')"
+
+  local sent=0
+  # Основной канал
+  if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
+    curl -s --max-time 10       "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"       -d "chat_id=${BOT_CHAT_ID}"       --data-urlencode "text=${msg}"       -d "parse_mode=HTML" > /dev/null 2>&1 && ((sent++))
+  fi
+  # Дополнительные каналы
+  while IFS= read -r line; do
+    local token; token=$(echo "$line" | cut -d'|' -f1)
+    local chat; chat=$(echo "$line" | cut -d'|' -f2)
+    curl -s --max-time 10       "https://api.telegram.org/bot${token}/sendMessage"       -d "chat_id=${chat}"       --data-urlencode "text=${msg}"       -d "parse_mode=HTML" > /dev/null 2>&1 && ((sent++))
+  done < <(grep '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+
+  if [[ "$sent" -gt 0 ]]; then
+    echo -e "  ${G}✅ Тест отправлен в $sent канал(ов)${N}"
+  else
+    echo -e "  ${R}❌ Не удалось отправить — проверьте настройки бота${N}"
+  fi
+  sleep 2
+}
+
+_setup_report_schedule() {
+  load_cfg; clear; echo ""
+  echo -e "  ${BOLD}🕐 Расписание ежедневных отчётов${N}\n"
+  local cur_hour; cur_hour=$(crontab -l 2>/dev/null | grep 'daily-report' | awk '{print $2}')
+  echo -e "  Текущее время отправки: ${W}${cur_hour:-17}:00 UTC${N} (≈ 20:00 МСК)\n"
+  echo -e "  ${C}[1]${N}  9:00 UTC  (12:00 МСК)"
+  echo -e "  ${C}[2]${N}  15:00 UTC  (18:00 МСК)"
+  echo -e "  ${C}[3]${N}  17:00 UTC  (20:00 МСК)  ${DIM}(текущее)${N}"
+  echo -e "  ${C}[4]${N}  21:00 UTC  (00:00 МСК)"
+  echo -e "  ${C}[5]${N}  Своё время"
+  echo -e "  ${C}[6]${N}  Отключить отчёты"
+  echo ""; read -rp "  Выбор [1-6]: " ch
+  local hour=""
+  case "$ch" in
+    1) hour=9 ;;  2) hour=15 ;; 3) hour=17 ;; 4) hour=21 ;;
+    5) read -rp "  Час UTC (0-23): " hour ;;
+    6) crontab -l 2>/dev/null | grep -v 'daily-report' | crontab - 2>/dev/null
+       echo -e "
+  ${G}✅ Отчёты отключены${N}"; sleep 2; return ;;
+  esac
+  if [[ -n "$hour" ]]; then
+    (crontab -l 2>/dev/null | grep -v 'daily-report'
+     echo "0 ${hour} * * * $HIDE_DIR/bin/daily-report.sh") | crontab -
+    echo -e "
+  ${G}✅ Отчёты будут отправляться в ${hour}:00 UTC${N}"
+    sleep 2
+  fi
 }
 
 _setup_bot() {
