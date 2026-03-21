@@ -1355,10 +1355,12 @@ _send_links_to_bot() {
     echo -e "\n  ${Y}⚠️  Бот не настроен → hide → [6] Настройки → Telegram бот${N}"
     sleep 2; return; }
 
-  local msg="🔗 <b>HIPR прокси ссылки</b>%0A%0A"
+  local msg
+  msg="🔗 <b>HIPR прокси ссылки</b>"
+  msg="${msg}"$'\n\n' 
   for i in "${!SNI_DOMAINS_ARR[@]}"; do
     local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${MTG_SECRETS_ARR[$i]}"
-    msg="${msg}[$((i+1))] SNI: ${SNI_DOMAINS_ARR[$i]}%0A<code>${tg}</code>%0A%0A"
+    msg="${msg}"$'\n'"[$((i+1))] SNI: ${SNI_DOMAINS_ARR[$i]}"$'\n'"<code>${tg}</code>"$'\n\n'
   done
   msg="${msg}🌐 ${DOMAIN}"
 
@@ -2123,25 +2125,15 @@ _change_sni_single() {
     new_secret="ee${rh}${dh}"
   fi
 
-  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_secret\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"$new_secret\"|" "$CONFIG_FILE"
-  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg0.toml"
-
-  python3 - "$HIDE_DIR/config/mtg0.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
-import sys, re
-path, sni = sys.argv[1], sys.argv[2]
-content = open(path).read()
-content = re.sub(
-  r'\[defense\.doppelganger\]\nurls = \[.*?\]',
-  f'[defense.doppelganger]\nurls = [\n  "https://{sni}/",\n  "https://{sni}"\n]',
-  content, flags=re.DOTALL
-)
-open(path, 'w').write(content)
-PYEOF
+  _cfg_set "SNI_DOMAINS" "$new_sni"
+  _cfg_set "MTG_SECRETS" "$new_secret"
+  _cfg_set "MTG_SECRET" "$new_secret"
+  _update_toml "$HIDE_DIR/config/mtg0.toml" "$new_sni" "$new_secret" "0"
 
   cat > /etc/nginx/snippets/hipr-stream.conf << EOF
 stream {
+    log_format proxy '\$remote_addr [\$time_local] \$protocol \$status \$bytes_sent \$bytes_received \$session_time "\$upstream_addr"';
+    access_log $HIDE_DIR/logs/stream-access.log proxy;
     map \$ssl_preread_server_name \$hipr_backend {
         $new_sni   127.0.0.1:${MTG_PORTS_ARR[0]:-2398};
         default    127.0.0.1:8443;
@@ -2158,6 +2150,7 @@ stream {
 EOF
 
   nginx -t 2>/dev/null && systemctl reload nginx
+  _update_prometheus_config
   systemctl restart hipr-mtg 2>/dev/null
   sleep 2
 
@@ -2172,12 +2165,12 @@ EOF
   if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
     read -rp "  Отправить новую ссылку в бот? [Y/n]: " send_bot
     if [[ "${send_bot,,}" != "n" ]]; then
-      local msg="🔑 <b>SNI изменён</b>%0A%0ASNI: <code>$new_sni</code>%0A%0A🔗 Новая ссылка:%0A<code>${new_link}</code>"
-      curl -s --max-time 10 \
-        "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1 \
-        && echo -e "  ${G}✅ Ссылка отправлена в бот${N}" \
-        || echo -e "  ${R}❌ Ошибка отправки${N}"
+      local msg
+      msg="🔑 <b>SNI изменён на ${new_sni}</b>
+
+🔗 Новая ссылка:
+<code>${new_link}</code>"
+      curl -s --max-time 10         "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"         -d "chat_id=${BOT_CHAT_ID}"         --data-urlencode "text=${msg}"         -d "parse_mode=HTML" 2>/dev/null | grep -q '"ok":true'         && echo -e "  ${G}✅ Ссылка отправлена в бот${N}"         || echo -e "  ${R}❌ Ошибка отправки${N}"
     fi
   fi
   pause
@@ -2268,6 +2261,71 @@ _mf_change_sni() {
   _apply_sni_change "$idx" "$new_sni"
 }
 
+
+# Обновляем Prometheus конфиг при смене SNI (pure bash, без heredoc python)
+
+# Обновляем mtg toml конфиг — secret, SNI комментарий, doppelganger urls
+_update_toml() {
+  local path="$1" sni="$2" secret="$3" idx="${4:-0}"
+  [[ ! -f "$path" ]] && return
+  # Используем временный файл для атомарной замены
+  local tmp; tmp=$(mktemp)
+  while IFS= read -r line; do
+    case "$line" in
+      "# HIPR"*)  echo "# HIPR — mtg инстанс ${idx} (SNI: ${sni})" ;;
+      "secret = "*)  echo "secret = "${secret}"" ;;
+      *)  echo "$line" ;;
+    esac
+  done < "$path" > "$tmp"
+  # Обновляем doppelganger urls через python (многострочный блок)
+  python3 -c "
+import re, sys
+path, sni = sys.argv[1], sys.argv[2]
+c = open(path).read()
+c = re.sub(
+    r'urls = \[.*?\]',
+    'urls = [
+  "https://' + sni + '/",
+  "https://' + sni + '"
+]',
+    c, flags=re.DOTALL)
+open(path, 'w').write(c)
+" "$tmp" "$sni" 2>/dev/null || true
+  mv "$tmp" "$path"
+}
+
+_update_prometheus_config() {
+  load_cfg; load_arrays
+  local prom_cfg="/etc/prometheus/prometheus.yml"
+  [[ ! -f "$prom_cfg" ]] && return
+  IFS='|' read -ra _u_snis  <<< "${SNI_DOMAINS:-}"
+  IFS='|' read -ra _u_ports <<< "${MTG_PROM_PORTS:-3129}"
+  {
+    grep -B999 "job_name: 'hipr_mtg'" "$prom_cfg" 2>/dev/null | head -n -1 ||       printf "global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+"
+    echo "  - job_name: 'hipr_mtg'"
+    echo "    static_configs:"
+    for _ui in "${!_u_snis[@]}"; do
+      echo "      - targets: ['127.0.0.1:${_u_ports[$_ui]}']"
+      echo "        labels:"
+      echo "          sni: '${_u_snis[$_ui]}'"
+    done
+    echo "    relabel_configs:"
+    echo "      - source_labels: [sni]"
+    echo "        target_label: instance"
+    grep -A999 "job_name: 'node'" "$prom_cfg" 2>/dev/null |       grep -v "job_name: 'hipr_mtg'" ||       printf "
+  - job_name: 'node'
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+"
+  } > "${prom_cfg}.tmp" && mv "${prom_cfg}.tmp" "$prom_cfg"
+  systemctl restart prometheus 2>/dev/null || true
+}
+
 _apply_sni_change() {
   local idx=$1 new_sni=$2
   load_arrays
@@ -2289,30 +2347,11 @@ _apply_sni_change() {
     _cfg_set "SNI_DOMAINS" "$new_sni_str"
   _cfg_set "MTG_SECRETS" "$new_sec_str"
   _cfg_set "MTG_SECRET" "${MTG_SECRETS_ARR[0]}"
-  # Обновляем секрет в toml
-  python3 -c "
-import re, sys
-path, sni, secret = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    c=open(path).read()
-    c=re.sub(r'secret = .*', 'secret = \"'+ secret +'\"', c)
-    c=re.sub(r'urls = \\[.*?\\]', 'urls = [\\n  \"https://'+sni+'/\",\\n  \"https://'+sni+'\"\\n]', c, flags=re.DOTALL)
-    open(path,'w').write(c)
-except: pass
-" "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" "$new_secret" 2>/dev/null || true
-  python3 - "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
-import sys, re
-path, sni = sys.argv[1], sys.argv[2]
-content = open(path).read()
-content = re.sub(
-  r'\[defense\.doppelganger\]\nurls = \[.*?\]',
-  f'[defense.doppelganger]\nurls = [\n  "https://{sni}/",\n  "https://{sni}"\n]',
-  content, flags=re.DOTALL
-)
-open(path, 'w').write(content)
-PYEOF
+  # Обновляем toml конфиг инстанса
+  _update_toml "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" "$new_secret" "$idx"
 
   _rebuild_nginx_stream
+  _update_prometheus_config
 
   local svc; svc=$(mtg_svc $idx)
   systemctl restart "$svc" 2>/dev/null
@@ -2328,10 +2367,12 @@ PYEOF
   if [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]]; then
     read -rp "  Отправить новую ссылку в бот? [Y/n]: " sb
     if [[ "${sb,,}" != "n" ]]; then
-      local msg="🔑 <b>Multi-fronting: SNI[$((idx+1))] изменён</b>%0A%0ASNI: <code>$new_sni</code>%0A%0A🔗 Новая ссылка:%0A<code>${new_link}</code>"
-      curl -s --max-time 10 "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${BOT_CHAT_ID}&text=${msg}&parse_mode=HTML" > /dev/null 2>&1 \
-        && echo -e "  ${G}✅ Отправлено${N}" || echo -e "  ${R}❌ Ошибка${N}"
+      local msg
+      msg="🔑 <b>SNI[${idx}] изменён на ${new_sni}</b>
+
+🔗 Новая ссылка:
+<code>${new_link}</code>"
+      curl -s --max-time 10         "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage"         -d "chat_id=${BOT_CHAT_ID}"         --data-urlencode "text=${msg}"         -d "parse_mode=HTML" 2>/dev/null | grep -q '"ok":true'         && echo -e "  ${G}✅ Отправлено${N}"         || echo -e "  ${R}❌ Ошибка${N}"
     fi
   fi
   pause
@@ -2352,6 +2393,7 @@ _mf_rotate_all() {
   done
 
   _rebuild_nginx_stream
+  _update_prometheus_config
   _mtg_action restart
   sleep 2
 
@@ -2376,16 +2418,7 @@ _apply_sni_change_silent() {
   _cfg_set "SNI_DOMAINS" "$new_sni_str"
   _cfg_set "MTG_SECRETS" "$new_sec_str"
   _cfg_set "MTG_SECRET" "${MTG_SECRETS_ARR[0]}"
-  python3 -c "
-import re, sys
-path, sni, secret = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    c=open(path).read()
-    c=re.sub(r'secret = .*', 'secret = \"'+ secret +'\"', c)
-    c=re.sub(r'urls = \\[.*?\\]', 'urls = [\\n  \"https://'+sni+'/\",\\n  \"https://'+sni+'\"\\n]', c, flags=re.DOTALL)
-    open(path,'w').write(c)
-except: pass
-" "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" "$new_secret" 2>/dev/null || true
+  _update_toml "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" "$new_secret" "$idx"
   echo -e "  ${G}✓${N}  [$((idx+1))] $new_sni"
 }
 
@@ -2466,10 +2499,10 @@ EOF
   local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
   local new_port_str; new_port_str=$(IFS='|'; echo "${MTG_PORTS_ARR[*]}")
   local new_prom_str; new_prom_str=$(IFS='|'; echo "${MTG_PROM_PORTS_ARR[*]}")
-  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_PORTS=.*|MTG_PORTS=\"$new_port_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_PROM_PORTS=.*|MTG_PROM_PORTS=\"$new_prom_str\"|" "$CONFIG_FILE"
+  _cfg_set "SNI_DOMAINS" "$new_sni_str"
+  _cfg_set "MTG_SECRETS" "$new_sec_str"
+  _cfg_set "MTG_PORTS" "$new_port_str"
+  _cfg_set "MTG_PROM_PORTS" "$new_prom_str"
 
   systemctl daemon-reload
   systemctl enable "hipr-mtg@${idx}" 2>/dev/null
@@ -2477,6 +2510,7 @@ EOF
   sleep 2
 
   _rebuild_nginx_stream
+  _update_prometheus_config
 
   local tg="tg://proxy?server=${DOMAIN}&port=443&secret=${new_secret}"
   echo ""
@@ -2524,11 +2558,12 @@ _mf_remove_instance() {
   local s4; s4=$(IFS='|'; echo "${MTG_PROM_PORTS_ARR[*]}")
   _cfg_set "SNI_DOMAINS" "$s1"
   _cfg_set "MTG_SECRETS" "$s2"
-  sed -i "s|MTG_PORTS=.*|MTG_PORTS=\"$s3\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_PROM_PORTS=.*|MTG_PROM_PORTS=\"$s4\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
+  _cfg_set "MTG_PORTS" "$s3"
+  _cfg_set "MTG_PROM_PORTS" "$s4"
+  _cfg_set "MTG_SECRET" "${MTG_SECRETS_ARR[0]}"
 
   _rebuild_nginx_stream
+  _update_prometheus_config
   echo -e "\n  ${G}✅ Инстанс удалён${N}"; pause
 }
 
