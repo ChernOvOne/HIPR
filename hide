@@ -141,6 +141,10 @@ draw_header() {
   kvc "📡 DC:"      "${ACTIVE_DC:-—}"
   kv  "🎨 Тема:"   "$(active_theme)"
   kv  "⚙️  Режим:"  "${MODE:-single}"
+  local ipv6_status
+  sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "1" \
+    && ipv6_status="отключён" || ipv6_status="включён"
+  kv  "🌐 IPv6:"     "$ipv6_status"
   sep
   # Telegram открывает 3-8 TCP-соединений на клиента — делим для оценки реальных юзеров
   local ESTIMATED_USERS=$(( STAT_ACTIVE > 0 ? (STAT_ACTIVE + 3) / 4 : 0 ))
@@ -789,9 +793,27 @@ menu_services() {
       3) _mtg_action start ;;
       4) nginx -t 2>/dev/null && systemctl reload nginx \
            && echo -e "\n  ${G}✅ nginx перезагружен${N}"; sleep 2 ;;
-      5) _mtg_action restart
-         systemctl reload nginx 2>/dev/null
-         echo -e "\n  ${G}✅ Всё перезапущено${N}"; sleep 2 ;;
+      5)
+         echo -e "\n  ${Y}Перезапускаем сервисы...${N}"
+         load_cfg; load_arrays
+         if [[ "${MODE:-single}" == "multi" ]]; then
+           for i in "${!SNI_DOMAINS_ARR[@]}"; do
+             systemctl restart "hipr-mtg@${i}" 2>/dev/null \
+               && echo -e "  ${G}✅ hipr-mtg@${i}${N}" \
+               || echo -e "  ${R}❌ hipr-mtg@${i}${N}"
+           done
+         else
+           systemctl restart hipr-mtg 2>/dev/null \
+             && echo -e "  ${G}✅ hipr-mtg${N}" \
+             || echo -e "  ${R}❌ hipr-mtg${N}"
+         fi
+         systemctl restart dnsproxy 2>/dev/null \
+           && echo -e "  ${G}✅ dnsproxy${N}" || echo -e "  ${R}❌ dnsproxy${N}"
+         nginx -t 2>/dev/null \
+           && systemctl reload nginx 2>/dev/null \
+           && echo -e "  ${G}✅ nginx${N}" \
+           || echo -e "  ${R}❌ nginx (проверьте nginx -t)${N}"
+         echo -e "\n  ${G}✅ Перезапуск завершён${N}"; sleep 2 ;;
       6) _change_dc ;;
       7) bash "$HIDE_DIR/bin/watchdog.sh" \
            && echo -e "\n  ${G}✅ Watchdog выполнен${N}"; sleep 2 ;;
@@ -961,6 +983,79 @@ else: print(f'{b}B')
 # ══════════════════════════════════════════════════════════════════════════
 # 6. НАСТРОЙКИ И SNI
 # ══════════════════════════════════════════════════════════════════════════
+_manage_ipv6() {
+  clear; echo ""
+  top_b
+  printf "${B}  ║${N}  ${BOLD}🌐 %-53s${N}${B}║${N}\n" "Управление IPv6"
+  sep
+
+  local ipv6_val; ipv6_val=$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo "0")
+  if [[ "$ipv6_val" == "1" ]]; then
+    kv "Статус IPv6:" "🔴 отключён"
+  else
+    kv "Статус IPv6:" "🟢 включён"
+  fi
+
+  local syn_count; syn_count=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
+  kv "SYN-SENT (mtg):" "$syn_count зависших соединений"
+  bot_b; echo ""
+
+  echo -e "  ${C}[1]${N}  🔴  Отключить IPv6 ${DIM}(фикс зависших SYN-SENT)${N}"
+  echo -e "  ${C}[2]${N}  🟢  Включить IPv6"
+  echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+  read -rp "  Выберите: " ch
+  case "$ch" in
+    1)
+      local iface; iface=$(ip route | grep default | awk '{print $5}' | head -1)
+      iface="${iface:-eth0}"
+      sysctl -w net.ipv6.conf.all.disable_ipv6=1 > /dev/null 2>&1
+      sysctl -w net.ipv6.conf.default.disable_ipv6=1 > /dev/null 2>&1
+      sysctl -w "net.ipv6.conf.${iface}.disable_ipv6=1" > /dev/null 2>&1
+      # Сохраняем в sysctl.d
+      grep -q 'disable_ipv6' /etc/sysctl.d/99-hipr.conf 2>/dev/null || {
+        cat >> /etc/sysctl.d/99-hipr.conf << EOF
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.${iface}.disable_ipv6 = 1
+EOF
+      }
+      sed -i 's/DISABLE_IPV6=.*/DISABLE_IPV6="true"/' "$CONFIG_FILE" 2>/dev/null ||         echo 'DISABLE_IPV6="true"' >> "$CONFIG_FILE"
+      # Перезапускаем mtg
+      load_cfg
+      if [[ "${MODE:-single}" == "multi" ]]; then
+        for i in 0 1 2 3 4; do
+          systemctl is-enabled --quiet "hipr-mtg@${i}" 2>/dev/null &&             systemctl restart "hipr-mtg@${i}" 2>/dev/null || true
+        done
+      else
+        systemctl restart hipr-mtg 2>/dev/null || true
+      fi
+      ok "IPv6 отключён, mtg перезапущен"
+      sleep 2
+      local new_syn; new_syn=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
+      ok "SYN-SENT после перезапуска: $new_syn"
+      pause ;;
+    2)
+      local iface; iface=$(ip route | grep default | awk '{print $5}' | head -1)
+      iface="${iface:-eth0}"
+      sysctl -w net.ipv6.conf.all.disable_ipv6=0 > /dev/null 2>&1
+      sysctl -w net.ipv6.conf.default.disable_ipv6=0 > /dev/null 2>&1
+      sysctl -w "net.ipv6.conf.${iface}.disable_ipv6=0" > /dev/null 2>&1
+      sed -i '/disable_ipv6/d' /etc/sysctl.d/99-hipr.conf 2>/dev/null || true
+      sed -i 's/DISABLE_IPV6=.*/DISABLE_IPV6="false"/' "$CONFIG_FILE" 2>/dev/null || true
+      load_cfg
+      if [[ "${MODE:-single}" == "multi" ]]; then
+        for i in 0 1 2 3 4; do
+          systemctl is-enabled --quiet "hipr-mtg@${i}" 2>/dev/null &&             systemctl restart "hipr-mtg@${i}" 2>/dev/null || true
+        done
+      else
+        systemctl restart hipr-mtg 2>/dev/null || true
+      fi
+      ok "IPv6 включён, mtg перезапущен"
+      pause ;;
+    0|q) return ;;
+  esac
+}
+
 menu_settings() {
   while true; do
     load_cfg; load_arrays; clear; echo ""
@@ -986,6 +1081,7 @@ menu_settings() {
     echo -e "  ${C}[5]${N}  📄  Показать полный конфиг"
     echo -e "  ${C}[6]${N}  🔄  Сменить режим (single ↔ multi)"
     echo -e "  ${C}[7]${N}  📈  Починить nginx → Grafana"
+    echo -e "  ${C}[8]${N}  🌐  Управление IPv6"
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
@@ -1006,6 +1102,7 @@ menu_settings() {
          echo ""; pause ;;
       6) _switch_mode ;;
       7) _fix_grafana_nginx ;;
+      8) _manage_ipv6 ;;
       0|q) return ;;
     esac
   done
