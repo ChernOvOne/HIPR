@@ -2273,7 +2273,7 @@ _update_toml() {
   while IFS= read -r line; do
     case "$line" in
       "# HIPR"*)  echo "# HIPR — mtg инстанс ${idx} (SNI: ${sni})" ;;
-      "secret = "*)  echo "secret = "${secret}"" ;;
+      "secret = "*)  printf 'secret = "%s"\n' "${secret}" ;;
       *)  echo "$line" ;;
     esac
   done < "$path" > "$tmp"
