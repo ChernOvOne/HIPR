@@ -293,8 +293,9 @@ main_menu() {
     echo -e "  ${C}[3]${N}  ⚙️   Сервисы              ${DIM}запуск, стоп, рестарт${N}"
     echo -e "  ${C}[4]${N}  🔧  Настройки            ${DIM}TLS, IPv6, сеть, Grafana${N}"
     echo -e "  ${C}[5]${N}  🔔  Уведомления          ${DIM}бот, алерты, отчёты${N}"
-    echo -e "  ${C}[6]${N}  🎨  Темы                 ${DIM}сайт-обманка${N}"
-    echo -e "  ${C}[7]${N}  🔄  Обновление"
+    echo -e "  ${C}[6]${N}  👥  Пользователи        ${DIM}IP, гео, статистика${N}"
+    echo -e "  ${C}[7]${N}  🎨  Темы                 ${DIM}сайт-обманка${N}"
+    echo -e "  ${C}[8]${N}  🔄  Обновление"
     echo ""
     echo -e "  ${R}[9]${N}  🗑️   Удалить HIPR"
     echo -e "  ${DIM}[0]${N}  🚪  Выход"
@@ -306,8 +307,9 @@ main_menu() {
       3) menu_services ;;
       4) menu_settings ;;
       5) menu_notifications ;;
-      6) menu_themes ;;
-      7) menu_update ;;
+      6) menu_users ;;
+      7) menu_themes ;;
+      8) menu_update ;;
       9) menu_uninstall ;;
       0|q|Q) echo ""; exit 0 ;;
       *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
@@ -486,6 +488,291 @@ _notify_all() {
     local _cht; _cht=$(echo "$_line" | cut -d'|' -f2)
     _do_send "$_tok" "$_cht"
   done < <(grep '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# ПОЛЬЗОВАТЕЛИ — реальная статистика из stream лога
+# ══════════════════════════════════════════════════════════════════════════
+
+STREAM_LOG="/opt/hipr/logs/stream-access.log"
+GEO_CACHE="/tmp/hipr_geo_cache"
+
+# Получить геоданные IP (с кешированием)
+_geo_ip() {
+  local ip="$1"
+  local cache_file="${GEO_CACHE}_${ip}"
+  # Кеш на 24 часа
+  if [[ -f "$cache_file" ]] &&      [[ $(( $(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || echo 0) )) -lt 86400 ]]; then
+    cat "$cache_file"
+    return
+  fi
+  local result
+  result=$(curl -sf --max-time 5     "http://ip-api.com/json/${ip}?fields=country,countryCode,city,isp,org,mobile,proxy"     2>/dev/null)
+  if echo "$result" | grep -q '"country"'; then
+    echo "$result" > "$cache_file"
+    echo "$result"
+  else
+    echo '{"country":"?","city":"?","isp":"?","mobile":false,"proxy":false}'
+  fi
+}
+
+_geo_fmt() {
+  local ip="$1"
+  local geo; geo=$(_geo_ip "$ip")
+  local country; country=$(echo "$geo" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('country','?'))" 2>/dev/null)
+  local city; city=$(echo "$geo" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('city','?'))" 2>/dev/null)
+  local isp; isp=$(echo "$geo" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('isp','?'))" 2>/dev/null)
+  local mobile; mobile=$(echo "$geo" | python3 -c "import sys,json; d=json.load(sys.stdin); print('📱' if d.get('mobile') else '🖥')" 2>/dev/null)
+  local proxy; proxy=$(echo "$geo" | python3 -c "import sys,json; d=json.load(sys.stdin); print('🔒VPN' if d.get('proxy') else '')" 2>/dev/null)
+  echo "${mobile} ${country}, ${city} | ${isp} ${proxy}"
+}
+
+menu_users() {
+  while true; do
+    load_cfg; clear; echo ""
+    top_b
+    printf "${B}  ║${N}  ${BOLD}👥 %-53s${N}${B}║${N}\n" "Пользователи"
+    sep
+
+    if [[ ! -f "$STREAM_LOG" ]]; then
+      kv "Лог:" "отсутствует — включите логирование"
+      bot_b; echo ""
+      echo -e "  ${Y}Лог stream-access.log не найден.${N}"
+      echo -e "  ${DIM}Запустите: hide → [4] Настройки → [1] TLS/nginx${N}"
+      echo ""; pause; return
+    fi
+
+    # Статистика
+    local total_lines; total_lines=$(wc -l < "$STREAM_LOG" 2>/dev/null || echo 0)
+    local today; today=$(date '+%d/%b/%Y')
+    local today_lines; today_lines=$(grep "$today" "$STREAM_LOG" 2>/dev/null | wc -l)
+    local unique_today; unique_today=$(grep "$today" "$STREAM_LOG" 2>/dev/null |       awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+    local unique_total; unique_total=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}'       "$STREAM_LOG" 2>/dev/null | sort -u | wc -l)
+
+    kv "📅 Сегодня:" "${unique_today} уникальных IP / ${today_lines} соединений"
+    kv "📊 Всего:" "${unique_total} уникальных IP / ${total_lines} соединений"
+    kv "📝 Лог:" "$(du -sh $STREAM_LOG 2>/dev/null | cut -f1)"
+    bot_b; echo ""
+
+    echo -e "  ${C}[1]${N}  👤  Активные клиенты сейчас"
+    echo -e "  ${C}[2]${N}  📅  Уникальные IP сегодня"
+    echo -e "  ${C}[3]${N}  📊  Статистика за 7 дней"
+    echo -e "  ${C}[4]${N}  🏙️   ТОП городов"
+    echo -e "  ${C}[5]${N}  📡  ТОП операторов"
+    echo -e "  ${C}[6]${N}  🌍  ТОП стран"
+    echo -e "  ${C}[7]${N}  🔍  Поиск IP"
+    echo -e "  ${C}[8]${N}  🗑️   Очистить лог"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+    read -rp "  Выберите: " ch
+    case "$ch" in
+      1) _users_active ;;
+      2) _users_today ;;
+      3) _users_week ;;
+      4) _users_top_cities ;;
+      5) _users_top_isp ;;
+      6) _users_top_countries ;;
+      7) _users_search ;;
+      8) _users_clear_log ;;
+      0|q) return ;;
+    esac
+  done
+}
+
+_users_active() {
+  clear; echo ""
+  echo -e "  ${BOLD}👤 Активные клиенты сейчас${N}\n"
+  echo -e "  ${DIM}Подключения за последние 10 минут...${N}\n"
+
+  local since; since=$(date -d '10 minutes ago' '+%d/%b/%Y:%H:%M' 2>/dev/null)
+  local ips
+  ips=$(awk -v d="$since" '$0 > d && $7 ~ /2[34][0-9][0-9]/ {print $1}'     "$STREAM_LOG" 2>/dev/null | sort -u)
+
+  if [[ -z "$ips" ]]; then
+    echo -e "  ${DIM}Нет активных подключений за последние 10 минут${N}"
+    echo ""; pause; return
+  fi
+
+  local count=0
+  while IFS= read -r ip; do
+    ((count++))
+    echo -ne "  ${C}[${count}]${N} ${W}${ip}${N}  ${DIM}загружаем...${N}\r"
+    local geo_str; geo_str=$(_geo_fmt "$ip")
+    # Последнее подключение
+    local last; last=$(grep "^${ip} " "$STREAM_LOG" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '[')
+    # SNI/инстанс
+    local upstream; upstream=$(grep "^${ip} " "$STREAM_LOG" 2>/dev/null | tail -1 | awk '{print $7}' | tr -d '"')
+    local sni="—"
+    case "$upstream" in
+      *:2398*) sni="microsoft.com" ;;
+      *:2399*) sni="avito.ru" ;;
+      *:2400*) sni="ozon.ru" ;;
+      *:2401*) sni="wildberries.ru" ;;
+      *:2402*) sni="sberbank.ru" ;;
+    esac
+    printf "  ${C}[%d]${N} ${W}%-18s${N} %s\n" "$count" "$ip" "$geo_str"
+    echo -e "       ${DIM}Последнее: $last | SNI: $sni${N}"
+    echo ""
+  done <<< "$ips"
+
+  echo -e "  ${BOLD}Итого: ${count} уникальных IP${N}"
+  echo ""; pause
+}
+
+_users_today() {
+  clear; echo ""
+  echo -e "  ${BOLD}📅 Уникальные IP сегодня${N}\n"
+  local today; today=$(date '+%d/%b/%Y')
+
+  local ips
+  ips=$(grep "$today" "$STREAM_LOG" 2>/dev/null |     awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u)
+
+  if [[ -z "$ips" ]]; then
+    echo -e "  ${DIM}Нет данных за сегодня${N}"; echo ""; pause; return
+  fi
+
+  local count=0
+  while IFS= read -r ip; do
+    ((count++))
+    local conn_count; conn_count=$(grep "$today" "$STREAM_LOG" | grep "^${ip} " | wc -l)
+    local geo_str; geo_str=$(_geo_fmt "$ip")
+    printf "  ${C}%3d.${N} ${W}%-18s${N} %s  ${DIM}(%d conn)${N}\n"       "$count" "$ip" "$geo_str" "$conn_count"
+  done <<< "$ips"
+
+  echo ""
+  echo -e "  ${BOLD}Итого сегодня: ${count} уникальных IP${N}"
+  echo ""; pause
+}
+
+_users_week() {
+  clear; echo ""
+  echo -e "  ${BOLD}📊 Статистика за 7 дней${N}\n"
+  printf "  %-12s %-10s %-10s\n" "Дата" "Уникальных" "Соединений"
+  echo -e "  ${DIM}────────────────────────────────────${N}"
+  for i in 6 5 4 3 2 1 0; do
+    local day; day=$(date -d "${i} days ago" '+%d/%b/%Y' 2>/dev/null)
+    local day_fmt; day_fmt=$(date -d "${i} days ago" '+%d.%m' 2>/dev/null)
+    local unique; unique=$(grep "$day" "$STREAM_LOG" 2>/dev/null |       awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+    local conns; conns=$(grep "$day" "$STREAM_LOG" 2>/dev/null |       awk '$7 ~ /2[34][0-9][0-9]/' | wc -l)
+    if [[ "$i" -eq 0 ]]; then
+      printf "  ${G}%-12s %-10s %-10s${N}\n" "${day_fmt} (сег)" "$unique" "$conns"
+    else
+      printf "  %-12s %-10s %-10s\n" "$day_fmt" "$unique" "$conns"
+    fi
+  done
+  echo ""; pause
+}
+
+_users_top_cities() {
+  clear; echo ""
+  echo -e "  ${BOLD}🏙️  ТОП городов (за всё время)${N}\n"
+  echo -e "  ${DIM}Загружаем геоданные для уникальных IP...${N}\n"
+
+  local ips
+  ips=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
+
+  declare -A city_count
+  while IFS= read -r ip; do
+    local geo; geo=$(_geo_ip "$ip")
+    local city; city=$(echo "$geo" | python3 -c       "import sys,json; d=json.load(sys.stdin); print(d.get('country','?')+', '+d.get('city','?'))" 2>/dev/null)
+    city_count["$city"]=$(( ${city_count["$city"]:-0} + 1 ))
+  done <<< "$ips"
+
+  echo -e "  ${BOLD}Город                          Польз.${N}"
+  echo -e "  ${DIM}──────────────────────────────────────${N}"
+  for city in "${!city_count[@]}"; do
+    echo "${city_count[$city]} $city"
+  done | sort -rn | head -15 | while read count city; do
+    printf "  %-32s ${W}%d${N}\n" "$city" "$count"
+  done
+  echo ""; pause
+}
+
+_users_top_isp() {
+  clear; echo ""
+  echo -e "  ${BOLD}📡 ТОП операторов (за всё время)${N}\n"
+  echo -e "  ${DIM}Загружаем данные...${N}\n"
+
+  local ips
+  ips=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
+
+  declare -A isp_count
+  while IFS= read -r ip; do
+    local geo; geo=$(_geo_ip "$ip")
+    local isp; isp=$(echo "$geo" | python3 -c       "import sys,json; d=json.load(sys.stdin); print(d.get('isp','?'))" 2>/dev/null)
+    isp_count["$isp"]=$(( ${isp_count["$isp"]:-0} + 1 ))
+  done <<< "$ips"
+
+  echo -e "  ${BOLD}Оператор                       Польз.${N}"
+  echo -e "  ${DIM}──────────────────────────────────────${N}"
+  for isp in "${!isp_count[@]}"; do
+    echo "${isp_count[$isp]} $isp"
+  done | sort -rn | head -15 | while read count isp; do
+    printf "  %-32s ${W}%d${N}\n" "$isp" "$count"
+  done
+  echo ""; pause
+}
+
+_users_top_countries() {
+  clear; echo ""
+  echo -e "  ${BOLD}🌍 ТОП стран (за всё время)${N}\n"
+
+  local ips
+  ips=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
+
+  declare -A country_count
+  while IFS= read -r ip; do
+    local geo; geo=$(_geo_ip "$ip")
+    local country; country=$(echo "$geo" | python3 -c       "import sys,json; d=json.load(sys.stdin); print(d.get('country','?'))" 2>/dev/null)
+    country_count["$country"]=$(( ${country_count["$country"]:-0} + 1 ))
+  done <<< "$ips"
+
+  echo -e "  ${BOLD}Страна                         Польз.${N}"
+  echo -e "  ${DIM}──────────────────────────────────────${N}"
+  for country in "${!country_count[@]}"; do
+    echo "${country_count[$country]} $country"
+  done | sort -rn | head -15 | while read count country; do
+    printf "  %-32s ${W}%d${N}\n" "$country" "$count"
+  done
+  echo ""; pause
+}
+
+_users_search() {
+  clear; echo ""
+  echo -e "  ${BOLD}🔍 Поиск IP${N}\n"
+  read -rp "  Введите IP (или часть): " query
+  [[ -z "$query" ]] && return
+
+  clear; echo ""
+  echo -e "  ${BOLD}Результаты для: ${W}${query}${N}\n"
+
+  local matches
+  matches=$(grep "^${query}" "$STREAM_LOG" 2>/dev/null |     awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u)
+
+  if [[ -z "$matches" ]]; then
+    echo -e "  ${DIM}Не найдено${N}"; echo ""; pause; return
+  fi
+
+  while IFS= read -r ip; do
+    echo -e "  ${BOLD}IP: ${W}${ip}${N}"
+    local geo_str; geo_str=$(_geo_fmt "$ip")
+    echo -e "  Гео: $geo_str"
+    local first; first=$(grep "^${ip} " "$STREAM_LOG" | head -1 | awk '{print $2}' | tr -d '[')
+    local last; last=$(grep "^${ip} " "$STREAM_LOG" | tail -1 | awk '{print $2}' | tr -d '[')
+    local count; count=$(grep "^${ip} " "$STREAM_LOG" | wc -l)
+    echo -e "  ${DIM}Первое: $first | Последнее: $last | Всего: $count соед.${N}"
+    echo ""
+  done <<< "$matches"
+  pause
+}
+
+_users_clear_log() {
+  echo ""
+  read -rp "  Очистить лог stream-access.log? [y/N]: " c
+  [[ "${c,,}" != "y" ]] && return
+  > "$STREAM_LOG"
+  # Очищаем гео кеш
+  rm -f /tmp/hipr_geo_cache_* 2>/dev/null
+  echo -e "  ${G}✅ Лог очищен${N}"; sleep 2
 }
 
 # ══════════════════════════════════════════════════════════════════════════
