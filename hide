@@ -1229,14 +1229,29 @@ _grafana_menu() {
           -d "{\"oldPassword\":\"${oldpass}\",\"newPassword\":\"${newpass}\",\"confirmNew\":\"${newpass}\"}" \
           2>/dev/null)
         if echo "$result" | grep -q '"message":"Password changed"'; then
-          sed -i "s/GRAFANA_PASS=.*/GRAFANA_PASS=\"${newpass}\"/" "$CONFIG_FILE"
-          # Обновляем grafana.ini
+          sed -i "s/GRAFANA_PASS=.*/GRAFANA_PASS="${newpass}"/" "$CONFIG_FILE"
           sed -i "s/^admin_password = .*/admin_password = ${newpass}/" /etc/grafana/grafana.ini 2>/dev/null || true
+          # Снимаем блокировку brute-force
+          grep -q 'disable_brute_force' /etc/grafana/grafana.ini 2>/dev/null ||             sed -i "/^\[security\]/a disable_brute_force_login_protection = true" /etc/grafana/grafana.ini 2>/dev/null || true
           systemctl restart grafana-server 2>/dev/null
-          echo -e "\n  ${G}✅ Пароль изменён: ${W}${newpass}${N}"
+          sleep 2
+          echo -e "
+  ${G}✅ Пароль изменён: ${W}${newpass}${N}"
         else
-          echo -e "\n  ${R}❌ Не удалось изменить пароль через API${N}"
-          echo -e "  ${DIM}Попробуйте вручную: grafana-cli admin reset-admin-password <новый_пароль>${N}"
+          # API не сработал — пробуем grafana-cli
+          echo -e "
+  ${Y}→ Пробуем grafana-cli...${N}"
+          if grafana-cli admin reset-admin-password "${newpass}" 2>/dev/null; then
+            sed -i "s/GRAFANA_PASS=.*/GRAFANA_PASS="${newpass}"/" "$CONFIG_FILE"
+            sed -i "s/^admin_password = .*/admin_password = ${newpass}/" /etc/grafana/grafana.ini 2>/dev/null || true
+            grep -q 'disable_brute_force' /etc/grafana/grafana.ini 2>/dev/null ||               sed -i "/^\[security\]/a disable_brute_force_login_protection = true" /etc/grafana/grafana.ini 2>/dev/null || true
+            systemctl restart grafana-server 2>/dev/null
+            sleep 2
+            echo -e "  ${G}✅ Пароль изменён через grafana-cli: ${W}${newpass}${N}"
+          else
+            echo -e "  ${R}❌ Не удалось изменить пароль${N}"
+            echo -e "  ${DIM}Вручную: grafana-cli admin reset-admin-password <пароль>${N}"
+          fi
         fi
         echo ""; pause ;;
       3)
