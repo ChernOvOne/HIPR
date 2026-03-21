@@ -1353,10 +1353,62 @@ EOF
       PROM_OK=true
     else
       warn "Prometheus не запустился"
-      # Диагностика
       PROM_ERR=$(journalctl -u prometheus -n 5 --no-pager 2>/dev/null | tail -3)
       warn "Лог: $PROM_ERR"
     fi
+
+    # ── node_exporter (CPU/RAM/Disk метрики для Grafana) ──────────────────
+    info "Устанавливаем node_exporter..."
+    NODE_EXP_VER=$(curl -sf --max-time 10       "https://api.github.com/repos/prometheus/node_exporter/releases/latest"       | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'].lstrip('v'))"       2>/dev/null || echo "1.8.1")
+    NODE_EXP_URL="https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXP_VER}/node_exporter-${NODE_EXP_VER}.linux-${PROM_ARCH}.tar.gz"
+
+    if wget -q "$NODE_EXP_URL" -O /tmp/node_exporter.tar.gz 2>/dev/null; then
+      useradd --system --no-create-home --shell /bin/false node_exporter 2>/dev/null || true
+      mkdir -p /tmp/node-extract
+      tar -xzf /tmp/node_exporter.tar.gz -C /tmp/node-extract/
+      find /tmp/node-extract -name "node_exporter" -type f | head -1 |         xargs -I{} cp {} /usr/local/bin/node_exporter
+      chmod +x /usr/local/bin/node_exporter
+      rm -rf /tmp/node_exporter.tar.gz /tmp/node-extract
+
+      cat > /etc/systemd/system/node_exporter.service << 'EOF'
+[Unit]
+Description=Node Exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=node_exporter
+ExecStart=/usr/local/bin/node_exporter   --web.listen-address=127.0.0.1:9100   --collector.disable-defaults   --collector.cpu   --collector.meminfo   --collector.filesystem   --collector.netdev   --collector.loadavg   --collector.uname   --collector.time
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+      systemctl daemon-reload
+      systemctl enable node_exporter 2>/dev/null
+      systemctl start node_exporter
+      sleep 2
+
+      if systemctl is-active --quiet node_exporter; then
+        ok "node_exporter запущен (127.0.0.1:9100)"
+        # Добавляем в prometheus.yml
+        cat >> /etc/prometheus/prometheus.yml << 'NODEEOF'
+
+  - job_name: 'node'
+    static_configs:
+      - targets: ['127.0.0.1:9100']
+NODEEOF
+        systemctl restart prometheus 2>/dev/null
+        ok "Prometheus: node_exporter добавлен"
+      else
+        warn "node_exporter не запустился"
+      fi
+    else
+      warn "Не удалось скачать node_exporter — системные метрики недоступны"
+    fi
+
   else
     warn "Не удалось скачать Prometheus — пропускаем"
   fi
@@ -1570,7 +1622,7 @@ EOF
 
     # Импортируем дашборд
     DASH_JSON=$(cat << 'DASHJSON'
-{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"30s","time":{"from":"now-6h","to":"now"},"panels":[{"id":1,"title":"Онлайн пользователей","type":"stat","gridPos":{"x":0,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"польз."}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"TCP соединений","type":"stat","gridPos":{"x":4,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"conn"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"→ Telegram","type":"stat","gridPos":{"x":8,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":12,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":9,"title":"Трафик сейчас","type":"stat","gridPos":{"x":16,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[5m]))","legendFormat":"байт/с"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"unit":"Bps","color":{"mode":"fixed","fixedColor":"purple"}}}},{"id":10,"title":"FakeTLS","type":"stat","gridPos":{"x":20,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_domain_fronting)","legendFormat":"всего"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"semi-dark-blue"}}}},{"id":5,"title":"Пользователи и соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":16,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"},{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":11,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":16,"y":4,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}},{"id":6,"title":"Трафик (байт/сек)","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"исходящий"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[2m]))","legendFormat":"входящий"}],"fieldConfig":{"defaults":{"unit":"Bps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes/сек","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_domain_fronting[2m]))","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}}]},"overwrite":true,"folderId":0}
+{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"30s","time":{"from":"now-6h","to":"now"},"panels":[{"id":20,"type":"text","title":"","gridPos":{"x":0,"y":0,"w":24,"h":2},"options":{"mode":"markdown","content":"## HIPR MTProxy Dashboard\n**Прокси:** `${DOMAIN}` | Обновление каждые 30 сек | Telegram MTProto FakeTLS прокси"}},{"id":1,"title":"Онлайн пользователей","description":"Приблизительное число реальных пользователей (TCP соединений ÷ 4, т.к. Telegram открывает 3-8 соединений на клиента)","type":"stat","gridPos":{"x":0,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"польз."}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"},"unit":"short"}}},{"id":2,"title":"TCP соединений","description":"Активных TCP соединений к прокси прямо сейчас","type":"stat","gridPos":{"x":4,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"conn"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"→ Telegram DC","description":"Соединений от прокси к серверам Telegram","type":"stat","gridPos":{"x":8,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":9,"title":"Трафик сейчас","description":"Скорость передачи данных через прокси в данный момент","type":"stat","gridPos":{"x":12,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[5m]))","legendFormat":"↑"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[5m]))","legendFormat":"↓"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"unit":"Bps","color":{"mode":"fixed","fixedColor":"purple"}}}},{"id":4,"title":"Replay атак","description":"Попытки replay-атак. Ненулевое значение = ТСПУ или кто-то пытается сломать прокси","type":"stat","gridPos":{"x":16,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":10,"title":"FakeTLS handshakes","description":"Всего успешных FakeTLS handshake — каждое подключение клиента","type":"stat","gridPos":{"x":20,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_domain_fronting)","legendFormat":"всего"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"semi-dark-blue"}}}},{"id":5,"title":"Пользователи и соединения","description":"Динамика подключений во времени. ~Пользователей = TCP÷4","type":"timeseries","gridPos":{"x":0,"y":6,"w":16,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"},{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":11,"title":"По инстансам","description":"Нагрузка по каждому SNI домену отдельно","type":"bargauge","gridPos":{"x":16,"y":6,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}},{"id":6,"title":"Трафик (байт/сек)","description":"Скорость передачи данных. from_client = от пользователей к Telegram, to_client = обратно","type":"timeseries","gridPos":{"x":0,"y":14,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"↑ к Telegram"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[2m]))","legendFormat":"↓ от Telegram"}],"fieldConfig":{"defaults":{"unit":"Bps","custom":{"lineWidth":2}}}},{"id":12,"title":"Трафик за период (накопительный)","description":"Суммарный трафик нарастающим итогом. increase() считает прирост за выбранный период","type":"timeseries","gridPos":{"x":12,"y":14,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[24h]))","legendFormat":"за 24ч (↑)"},{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[30d]))","legendFormat":"за 30д (↑)"}],"fieldConfig":{"defaults":{"unit":"bytes","custom":{"lineWidth":2}}}},{"id":21,"type":"text","title":"Системные ресурсы сервера","gridPos":{"x":0,"y":22,"w":24,"h":2},"options":{"mode":"markdown","content":"### Сервер (node_exporter)\nЦПУ, оперативная память, диск — метрики самого VPS"}},{"id":13,"title":"CPU нагрузка %","description":"Загрузка процессора. Норма < 70%. Выше 90% — проблема","type":"timeseries","gridPos":{"x":0,"y":24,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100)","legendFormat":"CPU %"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":0},{"color":"yellow","value":70},{"color":"red","value":90}]},"color":{"mode":"thresholds"}}}},{"id":14,"title":"RAM использование","description":"Занятая оперативная память","type":"timeseries","gridPos":{"x":8,"y":24,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100","legendFormat":"RAM %"},{"expr":"node_memory_MemAvailable_bytes / 1024 / 1024","legendFormat":"Свободно MB"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2}}}},{"id":15,"title":"Диск и сеть","description":"Использование диска и сетевой трафик самого сервера (все интерфейсы)","type":"timeseries","gridPos":{"x":16,"y":24,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"} * 100)","legendFormat":"Диск %"},{"expr":"rate(node_network_receive_bytes_total{device!=\"lo\"}[2m])","legendFormat":"Сеть ↓ байт/с"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}}]},"overwrite":true,"folderId":0}
 DASHJSON
 )
     curl -sf --max-time 10 \
@@ -1707,30 +1759,57 @@ if [[ "$SYN_COUNT" -gt 10 ]]; then
 fi
 
 # ── Мониторинг ресурсов сервера ───────────────────────────────────────────
+# Sustained alert: уведомление только если порог превышен >5 мин подряд
+# Используем файлы-маркеры /tmp/hipr_alert_<metric> с timestamp первого превышения
+
 ALERT_CPU_THR="${ALERT_CPU:-80}"
 ALERT_RAM_THR="${ALERT_RAM:-85}"
 ALERT_DISK_THR="${ALERT_DISK:-90}"
+ALERT_SUSTAINED_SEC=300  # 5 минут
 
 CPU_LOAD=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
 CPU_CORES=$(nproc 2>/dev/null || echo 1)
-CPU_PCT=$(echo "$CPU_LOAD $CPU_CORES" | awk '{printf "%d", $1/$2*100}')
-MEM_PCT=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
-DISK_PCT=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+CPU_PCT=$(echo "$CPU_LOAD $CPU_CORES" | awk '{printf "%d", $1/$2*100}' | tr -d '[:space:]')
+CPU_PCT="${CPU_PCT//[^0-9]/}"; CPU_PCT="${CPU_PCT:-0}"
+MEM_PCT=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}' | tr -d '[:space:]')
+MEM_PCT="${MEM_PCT//[^0-9]/}"; MEM_PCT="${MEM_PCT:-0}"
+DISK_PCT=$(df / | awk 'NR==2{print $5}' | tr -d '%[:space:]')
+DISK_PCT="${DISK_PCT//[^0-9]/}"; DISK_PCT="${DISK_PCT:-0}"
 
-if (( CPU_PCT > ALERT_CPU_THR )); then
-  log "WARN: CPU нагрузка высокая: ${CPU_PCT}% (порог ${ALERT_CPU_THR}%)"
-  notify "🔥 CPU нагрузка: ${CPU_PCT}% (порог ${ALERT_CPU_THR}%) — load average: ${CPU_LOAD}"
-fi
+check_sustained_alert() {
+  local metric="$1" value="$2" threshold="$3" label="$4" emoji="$5"
+  local marker="/tmp/hipr_alert_${metric}"
+  local now; now=$(date +%s)
 
-if (( MEM_PCT > ALERT_RAM_THR )); then
-  log "WARN: RAM заполнена на ${MEM_PCT}% (порог ${ALERT_RAM_THR}%)"
-  notify "💾 RAM: ${MEM_PCT}% занято (порог ${ALERT_RAM_THR}%)"
-fi
+  if [[ "$value" -gt "$threshold" ]]; then
+    if [[ ! -f "$marker" ]]; then
+      # Первое превышение — записываем timestamp
+      echo "$now" > "$marker"
+      log "WARN: $label начал превышать порог: ${value}% > ${threshold}%"
+    else
+      local first_ts; first_ts=$(cat "$marker" 2>/dev/null || echo "$now")
+      local duration=$(( now - first_ts ))
+      if [[ "$duration" -ge "$ALERT_SUSTAINED_SEC" ]]; then
+        # Превышение длится >5 мин — шлём уведомление
+        local mins=$(( duration / 60 ))
+        log "ALERT: $label превышает порог уже ${mins} мин: ${value}% > ${threshold}%"
+        notify "${emoji} <b>${label}: ${value}%</b> (порог ${threshold}%) уже ${mins} мин подряд"
+        # Обновляем timestamp чтобы не спамить чаще чем раз в 30 мин
+        echo $(( now - ALERT_SUSTAINED_SEC + 1800 )) > "$marker"
+      fi
+    fi
+  else
+    # Ниже порога — сбрасываем маркер
+    if [[ -f "$marker" ]]; then
+      rm -f "$marker"
+      log "OK: $label вернулся в норму: ${value}%"
+    fi
+  fi
+}
 
-if (( DISK_PCT > ALERT_DISK_THR )); then
-  log "WARN: Диск заполнен на ${DISK_PCT}% (порог ${ALERT_DISK_THR}%)"
-  notify "💿 Диск: ${DISK_PCT}% занято (порог ${ALERT_DISK_THR}%)"
-fi
+check_sustained_alert "cpu"  "$CPU_PCT"  "$ALERT_CPU_THR"  "CPU нагрузка" "🔥"
+check_sustained_alert "ram"  "$MEM_PCT"  "$ALERT_RAM_THR"  "RAM"          "💾"
+check_sustained_alert "disk" "$DISK_PCT" "$ALERT_DISK_THR" "Диск"         "💿"
 WATCHDOG
 
 chmod +x "$HIDE_DIR/bin/watchdog.sh"
@@ -1767,10 +1846,9 @@ ok "Watchdog запущен (каждые 5 минут)"
 done_step
 
 # ── Ежедневный отчёт в бот ────────────────────────────────────────────────
-if [[ -n "$BOT_TOKEN" ]]; then
-  step "Ежедневный отчёт в Telegram"
+step "Создание скриптов отчётов"
 
-  cat > "$HIDE_DIR/bin/daily-report.sh" << 'REPORT'
+cat > "$HIDE_DIR/bin/daily-report.sh" << 'REPORT'
 #!/bin/bash
 CONFIG="/opt/hipr/config.env"
 [[ -f "$CONFIG" ]] && source "$CONFIG"
@@ -1857,14 +1935,16 @@ while IFS= read -r line; do
 done < <(grep '^NOTIFY_EXTRA_' "$CONFIG" 2>/dev/null | cut -d'"' -f2)
 REPORT
 
-  chmod +x "$HIDE_DIR/bin/daily-report.sh"
+chmod +x "$HIDE_DIR/bin/daily-report.sh"
 
+if [[ -n "$BOT_TOKEN" ]]; then
   (crontab -l 2>/dev/null | grep -v 'daily-report'
    echo "0 17 * * * $HIDE_DIR/bin/daily-report.sh") | crontab -
-
-  ok "Ежедневный отчёт в 20:00 МСК"
-  done_step
+  ok "Ежедневный отчёт в 20:00 МСК (cron)"
+else
+  ok "daily-report.sh создан (бот не настроен — отчёты через hide → [5])"
 fi
+done_step
 
 # ── fail2ban + ufw ────────────────────────────────────────────────────────
 step "Безопасность"
