@@ -2268,7 +2268,9 @@ _mf_change_sni() {
 _update_toml() {
   local path="$1" sni="$2" secret="$3" idx="${4:-0}"
   [[ ! -f "$path" ]] && return
-  # Используем временный файл для атомарной замены
+  # Сохраняем владельца и права оригинального файла
+  local owner; owner=$(stat -c '%U:%G' "$path" 2>/dev/null || echo "mtgproxy:mtgproxy")
+  local perms; perms=$(stat -c '%a' "$path" 2>/dev/null || echo "640")
   local tmp; tmp=$(mktemp)
   while IFS= read -r line; do
     case "$line" in
@@ -2291,6 +2293,8 @@ c = re.sub(
     c, flags=re.DOTALL)
 open(path, 'w').write(c)
 " "$tmp" "$sni" 2>/dev/null || true
+  chown "$owner" "$tmp" 2>/dev/null || true
+  chmod "$perms" "$tmp" 2>/dev/null || true
   mv "$tmp" "$path"
 }
 
