@@ -1393,8 +1393,8 @@ EOF
 
       if systemctl is-active --quiet node_exporter; then
         ok "node_exporter запущен (127.0.0.1:9100)"
-        # Добавляем в prometheus.yml
-        cat >> /etc/prometheus/prometheus.yml << 'NODEEOF'
+        # Добавляем в prometheus.yml (только если ещё нет)
+        grep -q "job_name: 'node'" /etc/prometheus/prometheus.yml 2>/dev/null ||         cat >> /etc/prometheus/prometheus.yml << 'NODEEOF'
 
   - job_name: 'node'
     static_configs:
