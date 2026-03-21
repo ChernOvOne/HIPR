@@ -588,6 +588,9 @@ Restart=always
 RestartSec=10
 StartLimitBurst=5
 StartLimitInterval=60
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
 StandardOutput=append:$HIDE_DIR/logs/mtg0.log
 StandardError=append:$HIDE_DIR/logs/mtg0-error.log
 LimitNOFILE=1000000
@@ -617,6 +620,9 @@ Restart=always
 RestartSec=10
 StartLimitBurst=5
 StartLimitInterval=60
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
 StandardOutput=append:$HIDE_DIR/logs/mtg%i.log
 StandardError=append:$HIDE_DIR/logs/mtg%i-error.log
 LimitNOFILE=1000000
@@ -1193,30 +1199,28 @@ EOF
     ln -sf /etc/nginx/sites-available/hipr-ssl /etc/nginx/sites-enabled/
 
     # Строим nginx stream SNI карту
-    STREAM_MAP=""
-    for i in "${!SNI_DOMAINS[@]}"; do
-      STREAM_MAP="${STREAM_MAP}        ${SNI_DOMAINS[$i]}   127.0.0.1:${MTG_PORTS[$i]};\n"
-    done
-
     dpkg -l libnginx-mod-stream 2>/dev/null | grep -q '^ii' || \
       apt-get install -y -qq libnginx-mod-stream 2>/dev/null
 
-    cat > /etc/nginx/snippets/hipr-stream.conf << EOF
-stream {
-    map \$ssl_preread_server_name \$hipr_backend {
-$(echo -e "$STREAM_MAP")        default         127.0.0.1:8443;
-    }
-
-    server {
-        listen 443;
-        listen [::]:443;
-        proxy_pass            \$hipr_backend;
-        ssl_preread           on;
-        proxy_timeout         10m;
-        proxy_connect_timeout 10s;
-    }
-}
-EOF
+    mkdir -p /etc/nginx/snippets
+    {
+      echo "stream {"
+      echo "    map \$ssl_preread_server_name \$hipr_backend {"
+      for i in "${!SNI_DOMAINS[@]}"; do
+        echo "        ${SNI_DOMAINS[$i]}   127.0.0.1:${MTG_PORTS[$i]};"
+      done
+      echo "        default         127.0.0.1:8443;"
+      echo "    }"
+      echo "    server {"
+      echo "        listen 443;"
+      echo "        listen [::]:443;"
+      echo "        proxy_pass            \$hipr_backend;"
+      echo "        ssl_preread           on;"
+      echo "        proxy_timeout         10m;"
+      echo "        proxy_connect_timeout 10s;"
+      echo "    }"
+      echo "}"
+    } > /etc/nginx/snippets/hipr-stream.conf
 
     if ! grep -q 'hipr-stream.conf' /etc/nginx/nginx.conf; then
       echo "include /etc/nginx/snippets/hipr-stream.conf;" >> /etc/nginx/nginx.conf
@@ -1848,6 +1852,20 @@ echo -e "  ${W}hide${N}  — открыть меню управления"
   echo -e "  ${W}Grafana${N}: $GRAFANA_URL  логин: admin / $GRAFANA_PASS"
 echo -e "${B}  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
 echo ""
+
+# ── Финальная проверка критичных компонентов ─────────────────────────────
+CERT_OK_FINAL=false
+[[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]] && CERT_OK_FINAL=true
+STREAM_OK_FINAL=false
+[[ -f "/etc/nginx/snippets/hipr-stream.conf" ]] && STREAM_OK_FINAL=true
+
+if [[ "$CERT_OK_FINAL" == "false" || "$STREAM_OK_FINAL" == "false" ]]; then
+  echo ""
+  echo -e "${R}${BOLD}  ⚠️  ВНИМАНИЕ: прокси НЕ будет работать!${N}"
+  [[ "$CERT_OK_FINAL" == "false" ]] &&     echo -e "  ${R}✗${N}  TLS сертификат не получен — настройте DNS и запустите: ${W}hide → [6] → [2]${N}"
+  [[ "$STREAM_OK_FINAL" == "false" ]] &&     echo -e "  ${R}✗${N}  nginx stream не настроен — запустите: ${W}hide → [6] → [2]${N}"
+  echo ""
+fi
 
 echo -e "  ${BOLD}Статус сервисов:${N}"
 for svc in nginx dnsproxy hipr-watchdog.timer; do
