@@ -333,6 +333,10 @@ menu_status() {
     kv "📦 Трафик:" "$STAT_BYTES_FMT"
     kv "🎭 FakeTLS:" "$STAT_FRONTING handshakes"
     kv "🛡️  Replay атак:" "$STAT_REPLAYS"
+    if [[ "${INSTALL_GRAFANA:-false}" == "true" ]]; then
+      local gpass; gpass=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+      [[ -n "$gpass" ]] && kv "📈 Grafana пароль:" "$gpass"
+    fi
     local ce; ce=$(certbot certificates 2>/dev/null | grep -A3 "${DOMAIN:-_}" \
       | grep "Expiry" | awk '{print $3,$4}' | head -1)
     kv "🔒 Сертификат:" "${ce:-—}"
@@ -1176,6 +1180,119 @@ EOF
   esac
 }
 
+
+_grafana_menu() {
+  while true; do
+    load_cfg; clear; echo ""
+    top_b
+    printf "${B}  ║${N}  ${BOLD}📈 %-53s${N}${B}║${N}\n" "Grafana"
+    sep
+    local gpass; gpass=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+    local gurl="${GRAFANA_URL:-—}"
+    kv "🌐 URL:"    "$gurl"
+    kv "👤 Логин:"  "admin"
+    kv "🔑 Пароль:" "${gpass:-не задан}"
+    bot_b; echo ""
+    echo -e "  ${C}[1]${N}  🔑  Показать пароль"
+    echo -e "  ${C}[2]${N}  🔄  Сбросить пароль (новый случайный)"
+    echo -e "  ${C}[3]${N}  📊  Переимпортировать дашборд HIPR"
+    echo -e "  ${C}[4]${N}  🔗  Добавить datasource Prometheus"
+    echo -e "  ${C}[5]${N}  📈  Починить nginx → Grafana"
+    echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
+    read -rp "  Выберите: " ch
+    case "$ch" in
+      1)
+        clear; echo ""
+        local p; p=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+        if [[ -n "$p" ]]; then
+          echo -e "  ${BOLD}Grafana доступ:${N}"
+          echo -e "  URL:    ${W}${GRAFANA_URL:-https://$DOMAIN/grafana/}${N}"
+          echo -e "  Логин:  ${W}admin${N}"
+          echo -e "  Пароль: ${W}$p${N}"
+        else
+          echo -e "  ${R}Пароль не найден в config.env${N}"
+        fi
+        echo ""; pause ;;
+      2)
+        local newpass
+        newpass=$(openssl rand -base64 12 | tr -d '/+=' | head -c 12)"1!"
+        local oldpass; oldpass=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+        if [[ -z "$oldpass" ]]; then
+          echo -e "  ${R}Старый пароль не найден — не могу сбросить${N}"; pause; continue
+        fi
+        # Меняем через Grafana API
+        local result
+        result=$(curl -sf --max-time 10 \
+          -X PUT http://127.0.0.1:3000/api/user/password \
+          -H "Content-Type: application/json" \
+          -u "admin:${oldpass}" \
+          -d "{\"oldPassword\":\"${oldpass}\",\"newPassword\":\"${newpass}\",\"confirmNew\":\"${newpass}\"}" \
+          2>/dev/null)
+        if echo "$result" | grep -q '"message":"Password changed"'; then
+          sed -i "s/GRAFANA_PASS=.*/GRAFANA_PASS=\"${newpass}\"/" "$CONFIG_FILE"
+          # Обновляем grafana.ini
+          sed -i "s/^admin_password = .*/admin_password = ${newpass}/" /etc/grafana/grafana.ini 2>/dev/null || true
+          systemctl restart grafana-server 2>/dev/null
+          echo -e "\n  ${G}✅ Пароль изменён: ${W}${newpass}${N}"
+        else
+          echo -e "\n  ${R}❌ Не удалось изменить пароль через API${N}"
+          echo -e "  ${DIM}Попробуйте вручную: grafana-cli admin reset-admin-password <новый_пароль>${N}"
+        fi
+        echo ""; pause ;;
+      3)
+        local gpass2; gpass2=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+        if [[ -z "$gpass2" ]]; then
+          echo -e "  ${R}Пароль Grafana не найден в config.env${N}"; pause; continue
+        fi
+        echo -e "  ${Y}→ Импортируем дашборд...${N}"
+        # Сначала убеждаемся что datasource есть
+        curl -sf --max-time 10 \
+          -X POST http://127.0.0.1:3000/api/datasources \
+          -H "Content-Type: application/json" \
+          -u "admin:${gpass2}" \
+          -d '{"name":"Prometheus","type":"prometheus","url":"http://127.0.0.1:9090","access":"proxy","isDefault":true}' \
+          > /dev/null 2>&1 || true
+        local DASH_JSON
+        DASH_JSON='{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"10s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"title":"TCP соединений","type":"stat","gridPos":{"x":0,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"соединений"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"~Реальных пользователей","type":"stat","gridPos":{"x":6,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"юзеров"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"Соединений к Telegram","type":"stat","gridPos":{"x":12,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":18,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":5,"title":"Соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":24,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"},{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":6,"title":"Трафик","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"rate(sum(mtg_telegram_traffic)[2m])","legendFormat":"байт/сек"}],"fieldConfig":{"defaults":{"unit":"binBps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"rate(mtg_domain_fronting[2m])","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":8,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":0,"y":20,"w":24,"h":6},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}}]},"overwrite":true,"folderId":0}'
+        local res
+        res=$(curl -sf --max-time 15 \
+          -X POST http://127.0.0.1:3000/api/dashboards/import \
+          -H "Content-Type: application/json" \
+          -u "admin:${gpass2}" \
+          -d "$DASH_JSON" 2>/dev/null)
+        if echo "$res" | grep -q '"status":"success"\|"imported"\|uid'; then
+          echo -e "  ${G}✅ Дашборд HIPR импортирован${N}"
+          echo -e "  ${DIM}Открыть: ${GRAFANA_URL:-https://$DOMAIN/grafana/}${N}"
+        else
+          echo -e "  ${R}❌ Ошибка импорта: $res${N}"
+          echo -e "  ${DIM}Проверьте что Grafana и Prometheus запущены${N}"
+        fi
+        echo ""; pause ;;
+      4)
+        local gpass3; gpass3=$(grep "^GRAFANA_PASS=" "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
+        if [[ -z "$gpass3" ]]; then
+          echo -e "  ${R}Пароль Grafana не найден${N}"; pause; continue
+        fi
+        echo -e "  ${Y}→ Добавляем datasource Prometheus...${N}"
+        local res2
+        res2=$(curl -sf --max-time 10 \
+          -X POST http://127.0.0.1:3000/api/datasources \
+          -H "Content-Type: application/json" \
+          -u "admin:${gpass3}" \
+          -d '{"name":"Prometheus","type":"prometheus","url":"http://127.0.0.1:9090","access":"proxy","isDefault":true}' \
+          2>/dev/null)
+        if echo "$res2" | grep -q '"id"\|already exists'; then
+          echo -e "  ${G}✅ Datasource Prometheus добавлен (или уже существует)${N}"
+        else
+          echo -e "  ${R}❌ Ошибка: $res2${N}"
+        fi
+        echo ""; pause ;;
+      5) _fix_grafana_nginx ;;
+      0|q) return ;;
+    esac
+  done
+}
+
 menu_settings() {
   while true; do
     load_cfg; load_arrays; clear; echo ""
@@ -1202,6 +1319,7 @@ menu_settings() {
     echo -e "  ${C}[6]${N}  🔄  Сменить режим (single ↔ multi)"
     echo -e "  ${C}[7]${N}  📈  Починить nginx → Grafana"
     echo -e "  ${C}[8]${N}  🌐  Управление IPv6"
+    [[ "${INSTALL_GRAFANA:-false}" == "true" ]] &&       echo -e "  ${C}[9]${N}  📈  Grafana (пароль, дашборд)"
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
@@ -1223,6 +1341,7 @@ menu_settings() {
       6) _switch_mode ;;
       7) _fix_grafana_nginx ;;
       8) _manage_ipv6 ;;
+      9) _grafana_menu ;;
       0|q) return ;;
     esac
   done
