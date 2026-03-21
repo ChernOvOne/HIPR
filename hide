@@ -546,8 +546,8 @@ menu_users() {
     local total_lines; total_lines=$(wc -l < "$STREAM_LOG" 2>/dev/null || echo 0)
     local today; today=$(date '+%d/%b/%Y')
     local today_lines; today_lines=$(grep "$today" "$STREAM_LOG" 2>/dev/null | wc -l)
-    local unique_today; unique_today=$(grep "$today" "$STREAM_LOG" 2>/dev/null |       awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
-    local unique_total; unique_total=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}'       "$STREAM_LOG" 2>/dev/null | sort -u | wc -l)
+    local unique_today; unique_today=$(grep "$today" "$STREAM_LOG" 2>/dev/null |       awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+    local unique_total; unique_total=$(awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}'       "$STREAM_LOG" 2>/dev/null | sort -u | wc -l)
 
     kv "📅 Сегодня:" "${unique_today} уникальных IP / ${today_lines} соединений"
     kv "📊 Всего:" "${unique_total} уникальных IP / ${total_lines} соединений"
@@ -585,7 +585,7 @@ _users_active() {
 
   local since; since=$(date -d '10 minutes ago' '+%d/%b/%Y:%H:%M' 2>/dev/null)
   local ips
-  ips=$(awk -v d="$since" '$0 > d && $7 ~ /2[34][0-9][0-9]/ {print $1}'     "$STREAM_LOG" 2>/dev/null | sort -u)
+  ips=$(awk -v d="$since" '$0 > d && $9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}'     "$STREAM_LOG" 2>/dev/null | sort -u)
 
   if [[ -z "$ips" ]]; then
     echo -e "  ${DIM}Нет активных подключений за последние 10 минут${N}"
@@ -600,7 +600,7 @@ _users_active() {
     # Последнее подключение
     local last; last=$(grep "^${ip} " "$STREAM_LOG" 2>/dev/null | tail -1 | awk '{print $2}' | tr -d '[')
     # SNI/инстанс
-    local upstream; upstream=$(grep "^${ip} " "$STREAM_LOG" 2>/dev/null | tail -1 | awk '{print $7}' | tr -d '"')
+    local upstream; upstream=$(grep "^${ip} " "$STREAM_LOG" 2>/dev/null | tail -1 | awk '{print $9}' | tr -d '"')
     local sni="—"
     case "$upstream" in
       *:2398*) sni="microsoft.com" ;;
@@ -624,7 +624,7 @@ _users_today() {
   local today; today=$(date '+%d/%b/%Y')
 
   local ips
-  ips=$(grep "$today" "$STREAM_LOG" 2>/dev/null |     awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u)
+  ips=$(grep "$today" "$STREAM_LOG" 2>/dev/null |     awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' | sort -u)
 
   if [[ -z "$ips" ]]; then
     echo -e "  ${DIM}Нет данных за сегодня${N}"; echo ""; pause; return
@@ -651,8 +651,8 @@ _users_week() {
   for i in 6 5 4 3 2 1 0; do
     local day; day=$(date -d "${i} days ago" '+%d/%b/%Y' 2>/dev/null)
     local day_fmt; day_fmt=$(date -d "${i} days ago" '+%d.%m' 2>/dev/null)
-    local unique; unique=$(grep "$day" "$STREAM_LOG" 2>/dev/null |       awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
-    local conns; conns=$(grep "$day" "$STREAM_LOG" 2>/dev/null |       awk '$7 ~ /2[34][0-9][0-9]/' | wc -l)
+    local unique; unique=$(grep "$day" "$STREAM_LOG" 2>/dev/null |       awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+    local conns; conns=$(grep "$day" "$STREAM_LOG" 2>/dev/null |       awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/' | wc -l)
     if [[ "$i" -eq 0 ]]; then
       printf "  ${G}%-12s %-10s %-10s${N}\n" "${day_fmt} (сег)" "$unique" "$conns"
     else
@@ -668,7 +668,7 @@ _users_top_cities() {
   echo -e "  ${DIM}Загружаем геоданные для уникальных IP...${N}\n"
 
   local ips
-  ips=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
+  ips=$(awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
 
   declare -A city_count
   while IFS= read -r ip; do
@@ -693,7 +693,7 @@ _users_top_isp() {
   echo -e "  ${DIM}Загружаем данные...${N}\n"
 
   local ips
-  ips=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
+  ips=$(awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
 
   declare -A isp_count
   while IFS= read -r ip; do
@@ -717,7 +717,7 @@ _users_top_countries() {
   echo -e "  ${BOLD}🌍 ТОП стран (за всё время)${N}\n"
 
   local ips
-  ips=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
+  ips=$(awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' "$STREAM_LOG" 2>/dev/null |     sort -u | head -200)
 
   declare -A country_count
   while IFS= read -r ip; do
@@ -746,7 +746,7 @@ _users_search() {
   echo -e "  ${BOLD}Результаты для: ${W}${query}${N}\n"
 
   local matches
-  matches=$(grep "^${query}" "$STREAM_LOG" 2>/dev/null |     awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u)
+  matches=$(grep "^${query}" "$STREAM_LOG" 2>/dev/null |     awk '$9 !~ /8443/ && $9 ~ /:[23][0-9][0-9][0-9]/ {print $1}' | sort -u)
 
   if [[ -z "$matches" ]]; then
     echo -e "  ${DIM}Не найдено${N}"; echo ""; pause; return
