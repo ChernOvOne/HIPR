@@ -243,6 +243,21 @@ if [[ -n "$BOT_TOKEN" ]]; then
   read -rp "  Chat ID: " BOT_CHAT_ID
 fi
 
+# ── IPv6 ──────────────────────────────────────────────────────────────────
+echo ""
+echo -e "  ${W}Отключить IPv6?${N} ${DIM}(рекомендуется для большинства VPS в РФ)${N}"
+echo -e "  ${DIM}На серверах с dual-stack IPv4/IPv6 mtg может зависать на IPv6${N}"
+echo -e "  ${DIM}если link-local адрес не маршрутизируется в интернет${N}"
+echo ""
+echo -e "  ${C}[1]${N}  Да — отключить IPv6 ${DIM}(рекомендуется)${N}"
+echo -e "  ${C}[2]${N}  Нет — оставить IPv6"
+echo ""
+read -rp "  IPv6 [1-2, Enter=1]: " IPV6_CHOICE
+case "${IPV6_CHOICE:-1}" in
+  2) DISABLE_IPV6=false ;;
+  *) DISABLE_IPV6=true ;;
+esac
+
 # ── Итог ввода ────────────────────────────────────────────────────────────
 echo ""
 echo -e "  ${DIM}─────────────────────────────────────────${N}"
@@ -253,6 +268,7 @@ ok "SNI:     ${SNI_DOMAINS[*]}"
 ok "Тема:    $INITIAL_THEME"
 [[ "$INSTALL_GRAFANA" == "true" ]] && ok "Grafana: $GRAFANA_URL" || info "Grafana: нет"
 [[ -n "$BOT_TOKEN" ]] && ok "Бот:     настроен" || info "Бот:     пропущен"
+[[ "$DISABLE_IPV6" == "true" ]] && ok "IPv6:    отключить" || info "IPv6:    оставить"
 echo -e "  ${DIM}─────────────────────────────────────────${N}\n"
 
 read -rp "  Начать установку? [Y/n]: " CONFIRM
@@ -361,6 +377,21 @@ cat > /etc/security/limits.d/hipr.conf << 'LIMITS'
 LIMITS
 
 ok "sysctl оптимизирован"
+
+# ── Отключение IPv6 (если выбрано) ────────────────────────────────────────
+if [[ "$DISABLE_IPV6" == "true" ]]; then
+  IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+  IFACE="${IFACE:-eth0}"
+  cat >> /etc/sysctl.d/99-hipr.conf << SYSCTL_IPV6
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.${IFACE}.disable_ipv6 = 1
+SYSCTL_IPV6
+  sysctl -w net.ipv6.conf.all.disable_ipv6=1 > /dev/null 2>&1 || true
+  sysctl -w net.ipv6.conf.default.disable_ipv6=1 > /dev/null 2>&1 || true
+  sysctl -w "net.ipv6.conf.${IFACE}.disable_ipv6=1" > /dev/null 2>&1 || true
+  ok "IPv6 отключён (интерфейс: $IFACE)"
+fi
 done_step
 
 # ── Директории ────────────────────────────────────────────────────────────
@@ -530,7 +561,7 @@ http-path = "/metrics"
 metric-prefix = "mtg"
 
 [upstream]
-prefer-ip = "prefer-ipv4"
+prefer-ip = "only-ipv4"
 EOF
 
 done
@@ -652,6 +683,7 @@ MTG_PROM_PORTS="$MTG_PROM_PORTS_STR"
 # Compat: первый инстанс как основной
 MTG_SECRET="${MTG_SECRETS[0]}"
 MTG_PORT="${MTG_PORTS[0]}"
+DISABLE_IPV6="$DISABLE_IPV6"
 EOF
 
 ok "Конфиг сохранён: $CONFIG_FILE"
@@ -1638,6 +1670,13 @@ if [[ -f "$NGINX_LOG" ]]; then
       notify "🛡️ Обнаружены replay атаки ($REPLAYS) — возможно active probing ТСПУ"
     fi
   done
+fi
+
+# ── Проверка зависших IPv6 SYN-SENT ──────────────────────────────────────
+SYN_COUNT=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
+if [[ "$SYN_COUNT" -gt 10 ]]; then
+  log "WARN: Обнаружено $SYN_COUNT зависших IPv6 SYN-SENT от mtg"
+  notify "⚠️ mtg зависает на IPv6 ($SYN_COUNT соединений). Отключите IPv6: hide → [6] Настройки → [8] IPv6"
 fi
 WATCHDOG
 
