@@ -2676,29 +2676,76 @@ _send_test_notify() {
 
 _setup_report_schedule() {
   load_cfg; clear; echo ""
-  echo -e "  ${BOLD}🕐 Расписание ежедневных отчётов${N}\n"
+  echo -e "  ${BOLD}Расписание и часовой пояс${N}\n"
+
+  local cur_tz; cur_tz=$(cat /etc/timezone 2>/dev/null || timedatectl show --property=Timezone --value 2>/dev/null || echo "UTC")
+  local cur_time; cur_time=$(date '+%H:%M %Z')
   local cur_hour; cur_hour=$(crontab -l 2>/dev/null | grep 'daily-report' | awk '{print $2}')
-  echo -e "  Текущее время отправки: ${W}${cur_hour:-17}:00 UTC${N} (≈ 20:00 МСК)\n"
-  echo -e "  ${C}[1]${N}  9:00 UTC  (12:00 МСК)"
-  echo -e "  ${C}[2]${N}  15:00 UTC  (18:00 МСК)"
-  echo -e "  ${C}[3]${N}  17:00 UTC  (20:00 МСК)  ${DIM}(текущее)${N}"
-  echo -e "  ${C}[4]${N}  21:00 UTC  (00:00 МСК)"
-  echo -e "  ${C}[5]${N}  Своё время"
-  echo -e "  ${C}[6]${N}  Отключить отчёты"
-  echo ""; read -rp "  Выбор [1-6]: " ch
-  local hour=""
-  case "$ch" in
-    1) hour=9 ;;  2) hour=15 ;; 3) hour=17 ;; 4) hour=21 ;;
-    5) read -rp "  Час UTC (0-23): " hour ;;
-    6) crontab -l 2>/dev/null | grep -v 'daily-report' | crontab - 2>/dev/null
-       echo -e "
-  ${G}✅ Отчёты отключены${N}"; sleep 2; return ;;
+
+  echo -e "  ${DIM}Часовой пояс:${N}   ${W}${cur_tz}${N}"
+  echo -e "  ${DIM}Время сервера:${N}  ${W}${cur_time}${N}"
+  echo -e "  ${DIM}Отчёты в:${N}      ${W}${cur_hour:-17}:00 (серверное время)${N}\n"
+
+  echo -e "  ${BOLD}Изменить часовой пояс:${N}"
+  echo -e "  ${C}[1]${N}  Москва          Europe/Moscow    (UTC+3)"
+  echo -e "  ${C}[2]${N}  Екатеринбург    Asia/Yekaterinburg (UTC+5)"
+  echo -e "  ${C}[3]${N}  Новосибирск     Asia/Novosibirsk  (UTC+7)"
+  echo -e "  ${C}[4]${N}  Владивосток     Asia/Vladivostok  (UTC+10)"
+  echo -e "  ${C}[5]${N}  Киев/Минск      Europe/Kiev       (UTC+2)"
+  echo -e "  ${C}[6]${N}  Алматы          Asia/Almaty       (UTC+5)"
+  echo -e "  ${C}[7]${N}  UTC"
+  echo -e "  ${C}[8]${N}  Ввести вручную"
+  echo -e "  ${C}[9]${N}  Не менять пояс  (${cur_tz})"
+  echo ""
+  read -rp "  Пояс [1-9, Enter=9]: " tz_ch
+
+  local new_tz=""
+  case "${tz_ch:-9}" in
+    1) new_tz="Europe/Moscow" ;;
+    2) new_tz="Asia/Yekaterinburg" ;;
+    3) new_tz="Asia/Novosibirsk" ;;
+    4) new_tz="Asia/Vladivostok" ;;
+    5) new_tz="Europe/Kiev" ;;
+    6) new_tz="Asia/Almaty" ;;
+    7) new_tz="UTC" ;;
+    8) read -rp "  Введите (напр. Europe/Moscow): " new_tz ;;
+    9) new_tz="" ;;
   esac
-  if [[ -n "$hour" ]]; then
+
+  if [[ -n "$new_tz" ]]; then
+    if timedatectl set-timezone "$new_tz" 2>/dev/null; then
+      echo -e "  ${G}OK Пояс: $new_tz | Время: $(date '+%H:%M %Z')${N}"
+    else
+      echo -e "  ${R}Ошибка — проверьте название пояса${N}"
+      sleep 2; return
+    fi
+  fi
+
+  echo ""
+  echo -e "  ${BOLD}Время отправки отчёта:${N} ${DIM}(серверное время — $(cat /etc/timezone 2>/dev/null || echo UTC))${N}\n"
+  echo -e "  ${C}[1]${N}  08:00"
+  echo -e "  ${C}[2]${N}  12:00"
+  echo -e "  ${C}[3]${N}  18:00"
+  echo -e "  ${C}[4]${N}  20:00"
+  echo -e "  ${C}[5]${N}  23:00"
+  echo -e "  ${C}[6]${N}  Своё время"
+  echo -e "  ${C}[7]${N}  Отключить отчёты"
+  echo ""
+  read -rp "  Время [1-7, Enter=пропустить]: " t_ch
+
+  local hour=""
+  case "${t_ch:-}" in
+    1) hour=8 ;; 2) hour=12 ;; 3) hour=18 ;; 4) hour=20 ;; 5) hour=23 ;;
+    6) read -rp "  Час (0-23): " hour ;;
+    7) crontab -l 2>/dev/null | grep -v 'daily-report' | crontab - 2>/dev/null
+       echo -e "\n  ${G}OK Отчёты отключены${N}"; sleep 2; return ;;
+  esac
+
+  if [[ -n "$hour" && "$hour" =~ ^[0-9]+$ && "$hour" -le 23 ]]; then
     (crontab -l 2>/dev/null | grep -v 'daily-report'
      echo "0 ${hour} * * * $HIDE_DIR/bin/daily-report.sh") | crontab -
-    echo -e "
-  ${G}✅ Отчёты будут отправляться в ${hour}:00 UTC${N}"
+    local tz_now; tz_now=$(cat /etc/timezone 2>/dev/null || echo UTC)
+    echo -e "\n  ${G}OK Отчёты в ${hour}:00 (${tz_now})${N}"
     sleep 2
   fi
 }
