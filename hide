@@ -29,6 +29,29 @@ DIM=$'\033[2m'
 
 # ── Утилиты ────────────────────────────────────────────────────────────────
 load_cfg() { [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE" || true; }
+
+# Безопасное обновление config.env (избегает проблем sed со спецсимволами в секретах)
+_cfg_set() {
+  local key="$1" val="$2"
+  python3 -c "
+import sys
+path, key, val = '$CONFIG_FILE', sys.argv[1], sys.argv[2]
+try:
+    lines = open(path).readlines()
+    found = False
+    for i, line in enumerate(lines):
+        if line.startswith(key + '='):
+            lines[i] = key + '=' + chr(34) + val + chr(34) + chr(10)
+            found = True
+            break
+    if not found:
+        lines.append(key + '=' + chr(34) + val + chr(34) + chr(10))
+    open(path, 'w').writelines(lines)
+except Exception as e:
+    print('cfg_set error:', e, file=__import__('sys').stderr)
+" "$key" "$val"
+}
+
 top_b()    { echo -e "${B}  ╔══════════════════════════════════════════════════════════╗${N}"; }
 bot_b()    { echo -e "${B}  ╚══════════════════════════════════════════════════════════╝${N}"; }
 sep()      { echo -e "${B}  ╠══════════════════════════════════════════════════════════╣${N}"; }
@@ -1976,11 +1999,20 @@ _apply_sni_change() {
 
   local new_sni_str; new_sni_str=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
   local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
-  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
-
-  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg${idx}.toml"
+    _cfg_set "SNI_DOMAINS" "$new_sni_str"
+  _cfg_set "MTG_SECRETS" "$new_sec_str"
+  _cfg_set "MTG_SECRET" "${MTG_SECRETS_ARR[0]}"
+  # Обновляем секрет в toml
+  python3 -c "
+import re, sys
+path, sni, secret = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    c=open(path).read()
+    c=re.sub(r'secret = .*', 'secret = \"'+ secret +'\"', c)
+    c=re.sub(r'urls = \\[.*?\\]', 'urls = [\\n  \"https://'+sni+'/\",\\n  \"https://'+sni+'\"\\n]', c, flags=re.DOTALL)
+    open(path,'w').write(c)
+except: pass
+" "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" "$new_secret" 2>/dev/null || true
   python3 - "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" << 'PYEOF' 2>/dev/null || true
 import sys, re
 path, sni = sys.argv[1], sys.argv[2]
@@ -2054,10 +2086,19 @@ _apply_sni_change_silent() {
   MTG_SECRETS_ARR[$idx]="$new_secret"
   local new_sni_str; new_sni_str=$(IFS='|'; echo "${SNI_DOMAINS_ARR[*]}")
   local new_sec_str; new_sec_str=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
-  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$new_sni_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$new_sec_str\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
-  sed -i "s|^secret = .*|secret = \"$new_secret\"|" "$HIDE_DIR/config/mtg${idx}.toml"
+  _cfg_set "SNI_DOMAINS" "$new_sni_str"
+  _cfg_set "MTG_SECRETS" "$new_sec_str"
+  _cfg_set "MTG_SECRET" "${MTG_SECRETS_ARR[0]}"
+  python3 -c "
+import re, sys
+path, sni, secret = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    c=open(path).read()
+    c=re.sub(r'secret = .*', 'secret = \"'+ secret +'\"', c)
+    c=re.sub(r'urls = \\[.*?\\]', 'urls = [\\n  \"https://'+sni+'/\",\\n  \"https://'+sni+'\"\\n]', c, flags=re.DOTALL)
+    open(path,'w').write(c)
+except: pass
+" "$HIDE_DIR/config/mtg${idx}.toml" "$new_sni" "$new_secret" 2>/dev/null || true
   echo -e "  ${G}✓${N}  [$((idx+1))] $new_sni"
 }
 
@@ -2194,8 +2235,8 @@ _mf_remove_instance() {
   local s2; s2=$(IFS='|'; echo "${MTG_SECRETS_ARR[*]}")
   local s3; s3=$(IFS='|'; echo "${MTG_PORTS_ARR[*]}")
   local s4; s4=$(IFS='|'; echo "${MTG_PROM_PORTS_ARR[*]}")
-  sed -i "s|SNI_DOMAINS=.*|SNI_DOMAINS=\"$s1\"|" "$CONFIG_FILE"
-  sed -i "s|MTG_SECRETS=.*|MTG_SECRETS=\"$s2\"|" "$CONFIG_FILE"
+  _cfg_set "SNI_DOMAINS" "$s1"
+  _cfg_set "MTG_SECRETS" "$s2"
   sed -i "s|MTG_PORTS=.*|MTG_PORTS=\"$s3\"|" "$CONFIG_FILE"
   sed -i "s|MTG_PROM_PORTS=.*|MTG_PROM_PORTS=\"$s4\"|" "$CONFIG_FILE"
   sed -i "s|MTG_SECRET=.*|MTG_SECRET=\"${MTG_SECRETS_ARR[0]}\"|" "$CONFIG_FILE"
