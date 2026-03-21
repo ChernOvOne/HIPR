@@ -148,6 +148,7 @@ _autocheck() {
   fi
 
   [[ ${#issues[@]} -eq 0 ]] && return 0
+  # При наличии проблем предлагаем запустить полную диагностику
 
   echo -e "${Y}${BOLD}  ⚠️  Обнаружены проблемы:${N}"
   for issue in "${issues[@]}"; do
@@ -264,15 +265,15 @@ main_menu() {
     fi
     draw_header
     echo -e "  ${BOLD}${W}Главное меню${N}\n"
-    echo -e "  ${C}[1]${N}  📊  Мониторинг и статус"
-    echo -e "  ${C}[2]${N}  🔗  Прокси и подключения"
-    echo -e "  ${C}[3]${N}  ⚙️   Управление сервисами"
-    echo -e "  ${C}[4]${N}  🔧  Настройки"
-    echo -e "  ${C}[5]${N}  🔔  Уведомления и бот"
-    echo -e "  ${C}[6]${N}  🎨  Темы сайта-обманки"
+    echo -e "  ${C}[1]${N}  📊  Мониторинг          ${DIM}статус, метрики, диагностика${N}"
+    echo -e "  ${C}[2]${N}  🔗  Прокси               ${DIM}ссылки, SNI, DC, режим${N}"
+    echo -e "  ${C}[3]${N}  ⚙️   Сервисы              ${DIM}запуск, стоп, рестарт${N}"
+    echo -e "  ${C}[4]${N}  🔧  Настройки            ${DIM}TLS, IPv6, сеть, Grafana${N}"
+    echo -e "  ${C}[5]${N}  🔔  Уведомления          ${DIM}бот, алерты, отчёты${N}"
+    echo -e "  ${C}[6]${N}  🎨  Темы                 ${DIM}сайт-обманка${N}"
     echo -e "  ${C}[7]${N}  🔄  Обновление"
     echo ""
-    echo -e "  ${R}[9]${N}  🗑️   Удалить / Переустановить"
+    echo -e "  ${R}[9]${N}  🗑️   Удалить HIPR"
     echo -e "  ${DIM}[0]${N}  🚪  Выход"
     echo ""
     read -rp "  Выберите [0-9]: " ch
@@ -289,6 +290,167 @@ main_menu() {
       *) echo -e "\n  ${R}Неверный выбор${N}"; sleep 1 ;;
     esac
   done
+}
+
+
+_proxy_selftest() {
+  load_cfg; load_arrays; clear; echo ""
+  echo -e "  ${BOLD}🔍 Самодиагностика прокси${N}\n"
+  echo -e "  ${DIM}Проверяем каждый компонент цепочки...${N}\n"
+  local ok=0 fail=0
+
+  _check() {
+    local label="$1" result="$2"
+    if [[ "$result" == "ok" ]]; then
+      echo -e "  ${G}✓${N}  $label"
+      ((ok++))
+    else
+      echo -e "  ${R}✗${N}  $label ${DIM}→ $result${N}"
+      ((fail++))
+    fi
+  }
+
+  # 1. mtg процессы
+  local mtg_count; mtg_count=$(pgrep -x mtg | wc -l)
+  if [[ "$mtg_count" -gt 0 ]]; then
+    _check "mtg процессов запущено: $mtg_count" "ok"
+  else
+    _check "mtg не запущен" "systemctl start hipr-mtg@0"
+  fi
+
+  # 2. nginx порт 443
+  if ss -tlnp 2>/dev/null | grep -q '0.0.0.0:443'; then
+    _check "nginx слушает порт 443" "ok"
+  else
+    _check "nginx не слушает 443" "systemctl restart nginx"
+  fi
+
+  # 3. Stream конфиг
+  if [[ -f "/etc/nginx/snippets/hipr-stream.conf" ]]; then
+    # Проверяем что нет склеенных строк
+    if grep -q 'default.*127.0.0.1:8443' /etc/nginx/snippets/hipr-stream.conf 2>/dev/null; then
+      _check "nginx stream конфиг корректен" "ok"
+    else
+      _check "nginx stream конфиг повреждён" "hide → [4] → [1] TLS/nginx"
+    fi
+  else
+    _check "nginx stream конфиг отсутствует" "hide → [4] → [1] TLS/nginx"
+  fi
+
+  # 4. TLS сертификат
+  local cert_path="/etc/letsencrypt/live/${DOMAIN:-_}/fullchain.pem"
+  if [[ -f "$cert_path" ]]; then
+    local exp_date; exp_date=$(openssl x509 -enddate -noout -in "$cert_path" 2>/dev/null | cut -d= -f2)
+    local exp_epoch; exp_epoch=$(date -d "$exp_date" +%s 2>/dev/null || echo 0)
+    local now_epoch; now_epoch=$(date +%s)
+    local days_left=$(( (exp_epoch - now_epoch) / 86400 ))
+    if [[ "$days_left" -gt 7 ]]; then
+      _check "TLS сертификат действителен (осталось ${days_left} дн.)" "ok"
+    elif [[ "$days_left" -gt 0 ]]; then
+      _check "TLS сертификат истекает через ${days_left} дн.!" "certbot renew"
+    else
+      _check "TLS сертификат истёк!" "hide → [4] → [1]"
+    fi
+  else
+    _check "TLS сертификат отсутствует" "hide → [4] → [1] TLS/nginx"
+  fi
+
+  # 5. IPv6 SYN-SENT
+  local syn_count; syn_count=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
+  syn_count="${syn_count//[^0-9]/}"; syn_count="${syn_count:-0}"
+  if [[ "$syn_count" -lt 5 ]]; then
+    _check "IPv6 SYN-SENT: норма ($syn_count)" "ok"
+  else
+    _check "IPv6 SYN-SENT: $syn_count зависших соединений" "hide → [4] → [2] IPv6"
+  fi
+
+  # 6. SNI роутинг — тест подключения с правильным SNI
+  echo ""
+  echo -e "  ${DIM}Тест SNI роутинга...${N}"
+  IFS='|' read -ra _SNIS <<< "${SNI_DOMAINS:-microsoft.com}"
+  IFS='|' read -ra _PORTS <<< "${MTG_PORTS:-2398}"
+  for i in "${!_SNIS[@]}"; do
+    local sni="${_SNIS[$i]}"
+    local port="${_PORTS[$i]:-2398}"
+    # Проверяем что mtg слушает на нужном порту
+    if ss -tlnp 2>/dev/null | grep -q "127.0.0.1:${port}"; then
+      _check "mtg@${i} (${sni}) слушает :${port}" "ok"
+    else
+      _check "mtg@${i} (${sni}) не слушает :${port}" "systemctl start hipr-mtg@${i}"
+    fi
+    # Тест что nginx роутит SNI на mtg
+    local conn_test; conn_test=$(echo | timeout 3 openssl s_client       -connect "${DOMAIN}:443"       -servername "$sni" 2>/dev/null | grep -c "^depth=")
+    if [[ "$conn_test" -gt 0 ]]; then
+      _check "SNI роутинг ${sni} → mtg@${i}: работает" "ok"
+    else
+      _check "SNI роутинг ${sni}: нет ответа" "проверьте nginx stream"
+    fi
+  done
+
+  # 7. Prometheus метрики
+  echo ""
+  echo -e "  ${DIM}Проверка метрик...${N}"
+  IFS='|' read -ra _PPORTS <<< "${MTG_PROM_PORTS:-3129}"
+  for i in "${!_PPORTS[@]}"; do
+    local pport="${_PPORTS[$i]}"
+    if curl -sf --max-time 2 "http://127.0.0.1:${pport}/metrics" > /dev/null 2>&1; then
+      _check "Prometheus метрики mtg@${i} (:${pport})" "ok"
+    else
+      _check "Prometheus метрики mtg@${i} (:${pport}) недоступны" "mtg не запущен?"
+    fi
+  done
+
+  # 8. Telegram DC
+  echo ""
+  echo -e "  ${DIM}Проверка Telegram DC...${N}"
+  local dc_ok=0
+  for dc in "149.154.175.50" "149.154.167.51" "149.154.175.100" "149.154.167.91" "91.108.56.130"; do
+    timeout 3 bash -c "echo '' > /dev/tcp/$dc/443" 2>/dev/null && ((dc_ok++))
+  done
+  if [[ "$dc_ok" -eq 5 ]]; then
+    _check "Telegram DC: все 5 доступны" "ok"
+  elif [[ "$dc_ok" -gt 0 ]]; then
+    _check "Telegram DC: $dc_ok/5 доступны" "ok"
+  else
+    _check "Telegram DC: все недоступны!" "проверьте интернет"
+  fi
+
+  # Итог
+  echo ""
+  echo -e "  ${B}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"
+  if [[ "$fail" -eq 0 ]]; then
+    echo -e "  ${G}${BOLD}✅ Всё работает корректно! (${ok} проверок пройдено)${N}"
+    # Отправляем в бот если настроен
+    if [[ -n "${BOT_TOKEN:-}" ]]; then
+      _notify_all "✅ Самодиагностика HIPR: всё в порядке (${ok} проверок пройдено)\n🌐 ${DOMAIN}"
+    fi
+  else
+    echo -e "  ${R}${BOLD}Найдено проблем: ${fail}${N}  ${G}Пройдено: ${ok}${N}"
+    if [[ -n "${BOT_TOKEN:-}" ]]; then
+      _notify_all "⚠️ Самодиагностика HIPR: найдено проблем: ${fail}\n🌐 ${DOMAIN}\nЗапустите hide для диагностики"
+    fi
+  fi
+  echo ""; pause
+}
+
+# Универсальная функция отправки уведомлений во все каналы
+_notify_all() {
+  local msg="$1"
+  load_cfg
+  local _send_one_tok _send_one_cht
+  _do_send() {
+    curl -s --max-time 10 \
+      "https://api.telegram.org/bot${1}/sendMessage" \
+      -d "chat_id=${2}" \
+      --data-urlencode "text=${msg}" \
+      -d "parse_mode=HTML" > /dev/null 2>&1 || true
+  }
+  [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]] && _do_send "$BOT_TOKEN" "$BOT_CHAT_ID"
+  while IFS= read -r _line; do
+    local _tok; _tok=$(echo "$_line" | cut -d'|' -f1)
+    local _cht; _cht=$(echo "$_line" | cut -d'|' -f2)
+    _do_send "$_tok" "$_cht"
+  done < <(grep '^NOTIFY_EXTRA_' "$CONFIG_FILE" 2>/dev/null | cut -d'"' -f2)
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -368,7 +530,8 @@ menu_monitor() {
     kvc "📡 Активный DC:" "${ACTIVE_DC:-—}"
     row ""; bot_b; echo ""
 
-    echo -e "  ${C}[r]${N} Обновить  ${C}[t]${N} Тест DC  ${C}[p]${N} Пинг прокси  ${C}[s]${N} Диагностика сети  ${C}[d]${N} Диагностика системы  ${R}[0]${N} Назад"
+    echo -e "  ${C}[r]${N} Обновить  ${C}[t]${N} Тест DC  ${C}[p]${N} Пинг прокси  ${C}[s]${N} Диагностика сети"
+    echo -e "  ${C}[d]${N} Диагностика системы  ${C}[x]${N} 🔍 Самодиагностика прокси  ${R}[0]${N} Назад"
     echo ""
     read -rp "  " ch
     case "$ch" in
@@ -377,6 +540,7 @@ menu_monitor() {
       p|P) _ping_proxy ;;
       s|S) _speed_test ;;
       d|D) _system_diag ;;
+      x|X) _proxy_selftest ;;
       0|q) return ;;
     esac
   done
@@ -1109,13 +1273,17 @@ menu_services() {
     printf "${B}  ║${N}  %-20s %-37b${B}║${N}\n" "dnsproxy" "$(svc_status dnsproxy)"
     row ""; bot_b; echo ""
 
-    echo -e "  ${C}[1]${N}  🔄  Перезапустить все mtg"
-    echo -e "  ${C}[2]${N}  ⏹️   Остановить все mtg"
-    echo -e "  ${C}[3]${N}  ▶️   Запустить все mtg"
+    echo -e "  ${BOLD}mtg инстансы${N}"
+    echo -e "  ${C}[1]${N}  🔄  Перезапустить mtg"
+    echo -e "  ${C}[2]${N}  ⏹️   Остановить mtg"
+    echo -e "  ${C}[3]${N}  ▶️   Запустить mtg"
+    echo ""
+    echo -e "  ${BOLD}Система${N}"
     echo -e "  ${C}[4]${N}  🔄  Перезапустить nginx"
     echo -e "  ${C}[5]${N}  🔄  Перезапустить всё"
     echo -e "  ${C}[6]${N}  📡  Сменить Telegram DC"
-    echo -e "  ${C}[7]${N}  🐕  Запустить watchdog вручную"
+    echo -e "  ${C}[7]${N}  🔍  Самодиагностика прокси"
+    echo -e "  ${C}[8]${N}  🐕  Запустить watchdog"
     echo ""; echo -e "  ${R}[0]${N}  ← Назад"; echo ""
     read -rp "  Выберите: " ch
     case "$ch" in
@@ -1144,10 +1312,21 @@ menu_services() {
            && systemctl reload nginx 2>/dev/null \
            && echo -e "  ${G}✅ nginx${N}" \
            || echo -e "  ${R}❌ nginx (проверьте nginx -t)${N}"
-         echo -e "\n  ${G}✅ Перезапуск завершён${N}"; sleep 2 ;;
+         sleep 3
+         # Быстрая проверка после рестарта
+         local syn_after; syn_after=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
+         syn_after="${syn_after//[^0-9]/}"; syn_after="${syn_after:-0}"
+         if [[ "$syn_after" -gt 10 ]]; then
+           echo -e "  ${Y}⚠ SYN-SENT: $syn_after — возможна проблема с IPv6${N}"
+           echo -e "  ${DIM}→ Настройки → IPv6 → Отключить${N}"
+         else
+           echo -e "  ${G}✅ Перезапуск завершён (SYN-SENT: $syn_after)${N}"
+         fi
+         sleep 3 ;;
       6) _change_dc ;;
-      7) bash "$HIDE_DIR/bin/watchdog.sh" \
-           && echo -e "\n  ${G}✅ Watchdog выполнен${N}"; sleep 2 ;;
+      7) _proxy_selftest ;;
+      8) bash "$HIDE_DIR/bin/watchdog.sh"            && echo -e "
+  ${G}✅ Watchdog выполнен${N}"; sleep 2 ;;
       0|q) return ;;
     esac
   done
