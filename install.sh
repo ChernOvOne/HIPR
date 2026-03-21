@@ -1570,7 +1570,7 @@ EOF
 
     # Импортируем дашборд
     DASH_JSON=$(cat << 'DASHJSON'
-{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"10s","time":{"from":"now-1h","to":"now"},"panels":[{"id":1,"title":"TCP соединений","type":"stat","gridPos":{"x":0,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"соединений"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"~Реальных пользователей","type":"stat","gridPos":{"x":6,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"юзеров"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"Соединений к Telegram","type":"stat","gridPos":{"x":12,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":18,"y":0,"w":6,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":5,"title":"Соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":24,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"},{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":6,"title":"Трафик","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"байт/сек"}],"fieldConfig":{"defaults":{"unit":"binBps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_domain_fronting[2m]))","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":8,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":0,"y":20,"w":24,"h":6},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}}]},"overwrite":true,"folderId":0}
+{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"30s","time":{"from":"now-6h","to":"now"},"panels":[{"id":1,"title":"Онлайн пользователей","type":"stat","gridPos":{"x":0,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"польз."}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":2,"title":"TCP соединений","type":"stat","gridPos":{"x":4,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_client_connections)","legendFormat":"conn"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":3,"title":"→ Telegram","type":"stat","gridPos":{"x":8,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_telegram_connections)","legendFormat":"к TG"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":12,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":9,"title":"Трафик сейчас","type":"stat","gridPos":{"x":16,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[5m]))","legendFormat":"байт/с"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"unit":"Bps","color":{"mode":"fixed","fixedColor":"purple"}}}},{"id":10,"title":"FakeTLS","type":"stat","gridPos":{"x":20,"y":0,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_domain_fronting)","legendFormat":"всего"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"semi-dark-blue"}}}},{"id":5,"title":"Пользователи и соединения по времени","type":"timeseries","gridPos":{"x":0,"y":4,"w":16,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~пользователей"},{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":11,"title":"Соединения по инстансам","type":"bargauge","gridPos":{"x":16,"y":4,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"mtg_client_connections","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}},{"id":6,"title":"Трафик (байт/сек)","type":"timeseries","gridPos":{"x":0,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"исходящий"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[2m]))","legendFormat":"входящий"}],"fieldConfig":{"defaults":{"unit":"Bps","custom":{"lineWidth":2}}}},{"id":7,"title":"FakeTLS handshakes/сек","type":"timeseries","gridPos":{"x":12,"y":12,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_domain_fronting[2m]))","legendFormat":"{{instance}}"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}}]},"overwrite":true,"folderId":0}
 DASHJSON
 )
     curl -sf --max-time 10 \
@@ -1609,12 +1609,16 @@ DCS=(
 log()    { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 notify() {
   local msg="$1"
-  [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]] || return
-  curl -s --max-time 10 \
-    "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-    -d "chat_id=${BOT_CHAT_ID}" \
-    -d "text=🔔 HIPR: ${msg}" \
-    -d "parse_mode=HTML" > /dev/null 2>&1 || true
+  local _send_one() {
+    local tok="$1" cht="$2"
+    curl -s --max-time 10       "https://api.telegram.org/bot${tok}/sendMessage"       -d "chat_id=${cht}"       -d "text=🔔 HIPR: ${msg}"       -d "parse_mode=HTML" > /dev/null 2>&1 || true
+  }
+  [[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]] && _send_one "$BOT_TOKEN" "$BOT_CHAT_ID"
+  while IFS= read -r _line; do
+    local _tok; _tok=$(echo "$_line" | cut -d'|' -f1)
+    local _cht; _cht=$(echo "$_line" | cut -d'|' -f2)
+    _send_one "$_tok" "$_cht"
+  done < <(grep '^NOTIFY_EXTRA_' "$CONFIG" 2>/dev/null | cut -d'"' -f2)
 }
 
 check_dc() {
@@ -1699,7 +1703,33 @@ fi
 SYN_COUNT=$(ss -tn state syn-sent 2>/dev/null | grep -c mtg || echo 0)
 if [[ "$SYN_COUNT" -gt 10 ]]; then
   log "WARN: Обнаружено $SYN_COUNT зависших IPv6 SYN-SENT от mtg"
-  notify "⚠️ mtg зависает на IPv6 ($SYN_COUNT соединений). Отключите IPv6: hide → [6] Настройки → [8] IPv6"
+  notify "⚠️ mtg зависает на IPv6 ($SYN_COUNT соединений). Отключите IPv6: hide → [4] Настройки → [2] IPv6"
+fi
+
+# ── Мониторинг ресурсов сервера ───────────────────────────────────────────
+ALERT_CPU_THR="${ALERT_CPU:-80}"
+ALERT_RAM_THR="${ALERT_RAM:-85}"
+ALERT_DISK_THR="${ALERT_DISK:-90}"
+
+CPU_LOAD=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
+CPU_CORES=$(nproc 2>/dev/null || echo 1)
+CPU_PCT=$(echo "$CPU_LOAD $CPU_CORES" | awk '{printf "%d", $1/$2*100}')
+MEM_PCT=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
+DISK_PCT=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+
+if (( CPU_PCT > ALERT_CPU_THR )); then
+  log "WARN: CPU нагрузка высокая: ${CPU_PCT}% (порог ${ALERT_CPU_THR}%)"
+  notify "🔥 CPU нагрузка: ${CPU_PCT}% (порог ${ALERT_CPU_THR}%) — load average: ${CPU_LOAD}"
+fi
+
+if (( MEM_PCT > ALERT_RAM_THR )); then
+  log "WARN: RAM заполнена на ${MEM_PCT}% (порог ${ALERT_RAM_THR}%)"
+  notify "💾 RAM: ${MEM_PCT}% занято (порог ${ALERT_RAM_THR}%)"
+fi
+
+if (( DISK_PCT > ALERT_DISK_THR )); then
+  log "WARN: Диск заполнен на ${DISK_PCT}% (порог ${ALERT_DISK_THR}%)"
+  notify "💿 Диск: ${DISK_PCT}% занято (порог ${ALERT_DISK_THR}%)"
 fi
 WATCHDOG
 
@@ -1744,7 +1774,7 @@ if [[ -n "$BOT_TOKEN" ]]; then
 #!/bin/bash
 CONFIG="/opt/hipr/config.env"
 [[ -f "$CONFIG" ]] && source "$CONFIG"
-[[ -z "${BOT_TOKEN:-}" || -z "${BOT_CHAT_ID:-}" ]] && exit 0
+[[ -z "${BOT_TOKEN:-}" && ! $(grep -l NOTIFY_EXTRA_ "$CONFIG" 2>/dev/null) ]] && exit 0
 
 IFS='|' read -ra PPORTS <<< "${MTG_PROM_PORTS:-3129}"
 IFS='|' read -ra SNIS   <<< "${SNI_DOMAINS:-microsoft.com}"
@@ -1752,52 +1782,79 @@ IFS='|' read -ra SNIS   <<< "${SNI_DOMAINS:-microsoft.com}"
 TOTAL_ACTIVE=0; TOTAL_TG=0; TOTAL_BYTES=0; TOTAL_REPLAYS=0
 INST_LINES=""
 
+fmt_b() { python3 -c "b=$1
+if b>1073741824: print(f'{b/1073741824:.1f}GB')
+elif b>1048576: print(f'{b/1048576:.1f}MB')
+elif b>1024: print(f'{b/1024:.1f}KB')
+else: print(f'{b}B')" 2>/dev/null || echo "${1}B"; }
+
 for i in "${!PPORTS[@]}"; do
   port="${PPORTS[$i]}"
   sni="${SNIS[$i]:-?}"
   metrics=$(curl -sf --max-time 3 "http://127.0.0.1:${port}/metrics" 2>/dev/null)
   [[ -z "$metrics" ]] && continue
 
-  active=$(echo "$metrics" | grep '^mtg_client_connections{' | awk '{sum+=$2} END{print int(sum)}')
-  tg=$(echo "$metrics" | grep '^mtg_telegram_connections{' | awk '{sum+=$2} END{print int(sum)}')
-  bytes=$(echo "$metrics" | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)}')
-  replays=$(echo "$metrics" | grep '^mtg_replay_attacks ' | awk '{print int($2)}')
+  active=$(echo "$metrics" | grep '^mtg_client_connections{' | awk '{sum+=$2} END{print int(sum)+0}')
+  tg=$(echo "$metrics" | grep '^mtg_telegram_connections{' | awk '{sum+=$2} END{print int(sum)+0}')
+  bytes=$(echo "$metrics" | grep '^mtg_telegram_traffic{' | awk '{sum+=$2} END{print int(sum)+0}')
+  replays=$(echo "$metrics" | grep '^mtg_replay_attacks ' | awk '{print int($2)+0}')
+  users=$(( active > 0 ? (active+3)/4 : 0 ))
 
-  TOTAL_ACTIVE=$((TOTAL_ACTIVE + ${active:-0}))
-  TOTAL_TG=$((TOTAL_TG + ${tg:-0}))
-  TOTAL_BYTES=$((TOTAL_BYTES + ${bytes:-0}))
-  TOTAL_REPLAYS=$((TOTAL_REPLAYS + ${replays:-0}))
-  INST_LINES="${INST_LINES}  • ${sni}: ${active:-0} акт / $(echo "${bytes:-0}" | \
-    python3 -c 'import sys; b=int(sys.stdin.read().strip() or 0); print(f"{b/1048576:.1f}MB")' 2>/dev/null || echo "—")\n"
+  TOTAL_ACTIVE=$((TOTAL_ACTIVE + active))
+  TOTAL_TG=$((TOTAL_TG + tg))
+  TOTAL_BYTES=$((TOTAL_BYTES + bytes))
+  TOTAL_REPLAYS=$((TOTAL_REPLAYS + replays))
+  INST_LINES="${INST_LINES}  [${i}] ${sni}: ~${users} польз / $(fmt_b $bytes)\n"
 done
 
-fmt_bytes() {
-  python3 -c "
-b=$1
-if b > 1073741824: print(f'{b/1073741824:.1f} GB')
-elif b > 1048576: print(f'{b/1048576:.1f} MB')
-else: print(f'{b/1024:.1f} KB')
-" 2>/dev/null || echo "${1}B"
-}
+TOTAL_USERS=$(( TOTAL_ACTIVE > 0 ? (TOTAL_ACTIVE+3)/4 : 0 ))
+
+CPU_LOAD=$(uptime | awk -F'load average:' '{print $2}' | awk '{print $1}' | tr -d ',')
+MEM_PCT=$(free -m | awk '/Mem:/{printf "%.0f", $3/$2*100}')
+DISK_PCT=$(df / | awk 'NR==2{print $5}' | tr -d '%')
+UPTIME_STR=$(uptime -p 2>/dev/null | sed 's/up //' || echo "—")
+
+fmt_total() { python3 -c "b=$1
+if b>1073741824: print(f'{b/1073741824:.1f} GB')
+elif b>1048576: print(f'{b/1048576:.1f} MB')
+elif b>1024: print(f'{b/1024:.1f} KB')
+else: print(f'{b} B')" 2>/dev/null || echo "${1}B"; }
 
 MSG="📊 <b>HIPR дневной отчёт</b>
-$(date '+%d.%m.%Y')
+$(date '+%d.%m.%Y %H:%M UTC')
 
-🟢 Активных соединений: <b>${TOTAL_ACTIVE}</b>
-📡 Подключений к Telegram: <b>${TOTAL_TG}</b>
-📦 Трафик: <b>$(fmt_bytes $TOTAL_BYTES)</b>
+👥 <b>Пользователи</b>
+🟢 Сейчас онлайн: ~<b>${TOTAL_USERS}</b> польз / <b>${TOTAL_ACTIVE}</b> TCP
+📡 → Telegram: <b>${TOTAL_TG}</b> соединений
+📦 Трафик: <b>$(fmt_total $TOTAL_BYTES)</b>
 🛡️ Replay атак: <b>${TOTAL_REPLAYS}</b>
 
-🌐 Домен: ${DOMAIN}
-📡 DC: ${ACTIVE_DC}
+📡 <b>По инстансам</b>
+$(echo -e "$INST_LINES")
+🖥️ <b>Сервер</b>
+💻 CPU load: <b>${CPU_LOAD}</b>
+💾 RAM: <b>${MEM_PCT}%</b> занято
+💿 Диск: <b>${DISK_PCT}%</b> занято
+⏱️ Uptime: ${UPTIME_STR}
 
-$(echo -e "$INST_LINES")"
+🌐 ${DOMAIN} | DC: ${ACTIVE_DC}"
 
-curl -s --max-time 10 \
-  "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-  -d "chat_id=${BOT_CHAT_ID}" \
-  --data-urlencode "text=${MSG}" \
-  -d "parse_mode=HTML" > /dev/null 2>&1 || true
+send_msg() {
+  local token="$1" chat="$2"
+  curl -s --max-time 10 \
+    "https://api.telegram.org/bot${token}/sendMessage" \
+    -d "chat_id=${chat}" \
+    --data-urlencode "text=${MSG}" \
+    -d "parse_mode=HTML" > /dev/null 2>&1 || true
+}
+
+[[ -n "${BOT_TOKEN:-}" && -n "${BOT_CHAT_ID:-}" ]] && send_msg "$BOT_TOKEN" "$BOT_CHAT_ID"
+
+while IFS= read -r line; do
+  token=$(echo "$line" | cut -d'|' -f1)
+  chat=$(echo "$line" | cut -d'|' -f2)
+  send_msg "$token" "$chat"
+done < <(grep '^NOTIFY_EXTRA_' "$CONFIG" 2>/dev/null | cut -d'"' -f2)
 REPORT
 
   chmod +x "$HIDE_DIR/bin/daily-report.sh"
