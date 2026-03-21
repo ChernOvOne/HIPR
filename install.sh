@@ -1205,6 +1205,8 @@ EOF
     mkdir -p /etc/nginx/snippets
     {
       echo "stream {"
+      echo "    log_format proxy '\$remote_addr [\$time_local] \$protocol \$status \$bytes_sent \$bytes_received \$session_time "\$upstream_addr"';"
+      echo "    access_log $HIDE_DIR/logs/stream-access.log proxy;"
       echo "    map \$ssl_preread_server_name \$hipr_backend {"
       for i in "${!SNI_DOMAINS[@]}"; do
         echo "        ${SNI_DOMAINS[$i]}   127.0.0.1:${MTG_PORTS[$i]};"
@@ -1622,7 +1624,7 @@ EOF
 
     # Импортируем дашборд
     DASH_JSON=$(cat << 'DASHJSON'
-{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"30s","time":{"from":"now-24h","to":"now"},"panels":[{"id":20,"type":"text","title":"","gridPos":{"x":0,"y":0,"w":24,"h":2},"options":{"mode":"markdown","content":"## HIPR MTProxy\n**Прокси:** Telegram MTProto FakeTLS | Данные за выбранный период"}},{"id":1,"title":"Сейчас онлайн","description":"Активных пользователей прямо сейчас (TCP÷4)","type":"stat","gridPos":{"x":0,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections) / 4)","legendFormat":"сейчас"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":16,"title":"Пик за 24ч","description":"Максимальное число одновременных пользователей за последние 24 часа","type":"stat","gridPos":{"x":4,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(max_over_time(sum(mtg_client_connections)[24h:1m]) / 4)","legendFormat":"пик"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":17,"title":"Среднее за 24ч","description":"Среднее число одновременных пользователей за 24 часа","type":"stat","gridPos":{"x":8,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(avg_over_time(sum(mtg_client_connections)[24h:1m]) / 4)","legendFormat":"среднее"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"blue"}}}},{"id":9,"title":"Трафик сейчас","type":"stat","gridPos":{"x":12,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[5m]))","legendFormat":"байт/с"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"unit":"Bps","color":{"mode":"fixed","fixedColor":"purple"}}}},{"id":4,"title":"Replay атак","description":"Ненулевое = ТСПУ или атака","type":"stat","gridPos":{"x":16,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":18,"title":"Трафик за 24ч","description":"Суммарный трафик за последние 24 часа","type":"stat","gridPos":{"x":20,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[24h]))","legendFormat":"24ч"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"unit":"bytes","color":{"mode":"fixed","fixedColor":"semi-dark-purple"}}}},{"id":5,"title":"Пользователи онлайн по времени","description":"Текущие / пиковые / средние за период","type":"timeseries","gridPos":{"x":0,"y":6,"w":16,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"сейчас"},{"expr":"ceil(max_over_time(sum(mtg_client_connections)[1h:1m])/4)","legendFormat":"пик за 1ч"},{"expr":"ceil(avg_over_time(sum(mtg_client_connections)[1h:1m])/4)","legendFormat":"среднее за 1ч"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":11,"title":"По инстансам сейчас","type":"bargauge","gridPos":{"x":16,"y":6,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(mtg_client_connections/4)","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}},{"id":6,"title":"Трафик байт/сек","type":"timeseries","gridPos":{"x":0,"y":14,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"↑ к Telegram"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[2m]))","legendFormat":"↓ от Telegram"}],"fieldConfig":{"defaults":{"unit":"Bps","custom":{"lineWidth":2}}}},{"id":12,"title":"Трафик накопительный","description":"Суммарный трафик за 24ч и 30д","type":"timeseries","gridPos":{"x":12,"y":14,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[24h]))","legendFormat":"за 24ч"},{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[30d]))","legendFormat":"за 30д"}],"fieldConfig":{"defaults":{"unit":"bytes","custom":{"lineWidth":2}}}},{"id":21,"type":"text","title":"Сервер","gridPos":{"x":0,"y":22,"w":24,"h":2},"options":{"mode":"markdown","content":"### Системные ресурсы (node_exporter)"}},{"id":13,"title":"CPU %","type":"timeseries","gridPos":{"x":0,"y":24,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100)","legendFormat":"CPU %"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2},"thresholds":{"mode":"absolute","steps":[{"color":"green","value":0},{"color":"yellow","value":70},{"color":"red","value":90}]},"color":{"mode":"thresholds"}}}},{"id":14,"title":"RAM %","type":"timeseries","gridPos":{"x":8,"y":24,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100","legendFormat":"RAM %"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2}}}},{"id":15,"title":"Диск %","type":"timeseries","gridPos":{"x":16,"y":24,"w":8,"h":8},"datasource":"Prometheus","targets":[{"expr":"100 - (node_filesystem_avail_bytes{mountpoint=\"/\"} / node_filesystem_size_bytes{mountpoint=\"/\"} * 100)","legendFormat":"Диск /"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2}}}}]},"overwrite":true,"folderId":0}
+{"dashboard":{"title":"HIPR MTProxy","uid":"hipr-mtg","timezone":"browser","refresh":"30s","time":{"from":"now-24h","to":"now"},"panels":[{"id":20,"type":"text","title":"","gridPos":{"x":0,"y":0,"w":24,"h":2},"options":{"mode":"markdown","content":"## HIPR MTProxy\nDashboard | Telegram MTProto FakeTLS прокси"}},{"id":1,"title":"Уникальных сегодня","description":"Реальные уникальные IP из nginx stream лога за сегодня","type":"stat","gridPos":{"x":0,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"hipr_unique_clients_today","legendFormat":"сегодня"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"green"}}}},{"id":22,"title":"Активны (10 мин)","description":"Уникальных IP за последние 10 минут","type":"stat","gridPos":{"x":4,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"hipr_unique_clients_10m","legendFormat":"10м"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"semi-dark-green"}}}},{"id":16,"title":"Пик за 24ч","description":"Макс одновременных TCP÷4","type":"stat","gridPos":{"x":8,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"ceil(max_over_time(sum(mtg_client_connections)[24h:1m]) / 4)","legendFormat":"пик"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"fixed","fixedColor":"orange"}}}},{"id":9,"title":"Трафик сейчас","type":"stat","gridPos":{"x":12,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[5m]))","legendFormat":"байт/с"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"area"},"fieldConfig":{"defaults":{"unit":"Bps","color":{"mode":"fixed","fixedColor":"purple"}}}},{"id":4,"title":"Replay атак","type":"stat","gridPos":{"x":16,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(mtg_replay_attacks)","legendFormat":"атак"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"color":{"mode":"thresholds"},"thresholds":{"steps":[{"color":"green","value":0},{"color":"red","value":1}]}}}},{"id":18,"title":"Трафик за 24ч","type":"stat","gridPos":{"x":20,"y":2,"w":4,"h":4},"datasource":"Prometheus","targets":[{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[24h]))","legendFormat":"24ч"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"colorMode":"background","graphMode":"none"},"fieldConfig":{"defaults":{"unit":"bytes","color":{"mode":"fixed","fixedColor":"semi-dark-purple"}}}},{"id":23,"title":"Уникальных клиентов по времени","description":"Реальные уникальные IP из stream лога","type":"timeseries","gridPos":{"x":0,"y":6,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"hipr_unique_clients_today","legendFormat":"уникальных сегодня"},{"expr":"hipr_unique_clients_1h","legendFormat":"за 1ч"},{"expr":"hipr_unique_clients_10m","legendFormat":"за 10мин"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":5,"title":"TCP соединения по времени","type":"timeseries","gridPos":{"x":12,"y":6,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"ceil(sum(mtg_client_connections)/4)","legendFormat":"~польз (TCP÷4)"},{"expr":"sum(mtg_client_connections)","legendFormat":"TCP соединений"}],"fieldConfig":{"defaults":{"custom":{"lineWidth":2}}}},{"id":6,"title":"Трафик байт/сек","type":"timeseries","gridPos":{"x":0,"y":14,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(rate(mtg_telegram_traffic{direction=\"from_client\"}[2m]))","legendFormat":"↑ к Telegram"},{"expr":"sum(rate(mtg_telegram_traffic{direction=\"to_client\"}[2m]))","legendFormat":"↓ от Telegram"}],"fieldConfig":{"defaults":{"unit":"Bps","custom":{"lineWidth":2}}}},{"id":12,"title":"Трафик накопительный","type":"timeseries","gridPos":{"x":12,"y":14,"w":12,"h":8},"datasource":"Prometheus","targets":[{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[24h]))","legendFormat":"за 24ч"},{"expr":"sum(increase(mtg_telegram_traffic{direction=\"from_client\"}[30d]))","legendFormat":"за 30д"}],"fieldConfig":{"defaults":{"unit":"bytes","custom":{"lineWidth":2}}}},{"id":11,"title":"По инстансам","type":"bargauge","gridPos":{"x":0,"y":22,"w":8,"h":6},"datasource":"Prometheus","targets":[{"expr":"ceil(mtg_client_connections/4)","legendFormat":"{{instance}}"}],"options":{"reduceOptions":{"calcs":["lastNotNull"]},"orientation":"horizontal","displayMode":"gradient"}},{"id":13,"title":"CPU %","type":"timeseries","gridPos":{"x":8,"y":22,"w":8,"h":6},"datasource":"Prometheus","targets":[{"expr":"100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])) * 100)","legendFormat":"CPU %"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2}}}},{"id":14,"title":"RAM %","type":"timeseries","gridPos":{"x":16,"y":22,"w":8,"h":6},"datasource":"Prometheus","targets":[{"expr":"(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100","legendFormat":"RAM %"}],"fieldConfig":{"defaults":{"unit":"percent","max":100,"custom":{"lineWidth":2}}}}]},"overwrite":true,"folderId":0}
 DASHJSON
 )
     curl -sf --max-time 10 \
@@ -1843,6 +1845,71 @@ systemctl daemon-reload
 systemctl enable hipr-watchdog.timer 2>/dev/null
 systemctl start hipr-watchdog.timer 2>/dev/null
 ok "Watchdog запущен (каждые 5 минут)"
+
+# ── Скрипт экспорта метрик уникальных клиентов ────────────────────────────
+cat > "$HIDE_DIR/bin/stats-exporter.sh" << 'EXPORTER'
+#!/bin/bash
+# HIPR stats exporter — считает уникальные IP из stream лога
+# Пишет метрики для node_exporter textfile collector
+
+STREAM_LOG="/opt/hipr/logs/stream-access.log"
+OUT="/var/lib/prometheus/node-exporter/hipr_clients.prom"
+mkdir -p "$(dirname $OUT)"
+
+[[ ! -f "$STREAM_LOG" ]] && {
+  echo "# HELP hipr_unique_clients_total Unique client IPs" > "$OUT"
+  echo "hipr_unique_clients_total 0" >> "$OUT"
+  exit 0
+}
+
+TODAY=$(date '+%d/%b/%Y')
+HOUR_AGO=$(date -d '1 hour ago' '+%d/%b/%Y:%H:%M' 2>/dev/null)
+TEN_MIN_AGO=$(date -d '10 minutes ago' '+%d/%b/%Y:%H:%M' 2>/dev/null)
+
+# Уникальные IP (только реальные соединения к mtg, код 200)
+UNIQUE_TOTAL=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+UNIQUE_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+UNIQUE_1H=$(awk -v d="$HOUR_AGO" '$0 > d && $7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+UNIQUE_10M=$(awk -v d="$TEN_MIN_AGO" '$0 > d && $7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+CONN_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$7 ~ /2[34][0-9][0-9]/' | wc -l)
+
+cat > "$OUT" << EOF
+# HELP hipr_unique_clients_total Total unique client IPs ever
+# TYPE hipr_unique_clients_total gauge
+hipr_unique_clients_total $UNIQUE_TOTAL
+# HELP hipr_unique_clients_today Unique client IPs today
+# TYPE hipr_unique_clients_today gauge
+hipr_unique_clients_today $UNIQUE_TODAY
+# HELP hipr_unique_clients_1h Unique client IPs last 1 hour
+# TYPE hipr_unique_clients_1h gauge
+hipr_unique_clients_1h $UNIQUE_1H
+# HELP hipr_unique_clients_10m Unique client IPs last 10 minutes
+# TYPE hipr_unique_clients_10m gauge
+hipr_unique_clients_10m $UNIQUE_10M
+# HELP hipr_connections_today Total connections today
+# TYPE hipr_connections_today gauge
+hipr_connections_today $CONN_TODAY
+EOF
+EXPORTER
+
+chmod +x "$HIDE_DIR/bin/stats-exporter.sh"
+
+# Добавляем textfile collector в node_exporter если установлен
+if systemctl is-active --quiet node_exporter 2>/dev/null; then
+  mkdir -p /var/lib/prometheus/node-exporter
+  # Перезапускаем node_exporter с textfile collector
+  sed -i 's|--collector.time|--collector.time \
+  --collector.textfile \
+  --collector.textfile.directory=/var/lib/prometheus/node-exporter|'     /etc/systemd/system/node_exporter.service 2>/dev/null || true
+  systemctl daemon-reload
+  systemctl restart node_exporter 2>/dev/null || true
+  ok "node_exporter: textfile collector добавлен"
+fi
+
+# Cron каждую минуту
+(crontab -l 2>/dev/null | grep -v 'stats-exporter'
+ echo "* * * * * $HIDE_DIR/bin/stats-exporter.sh") | crontab -
+ok "stats-exporter запущен (каждую минуту)"
 done_step
 
 # ── Ежедневный отчёт в бот ────────────────────────────────────────────────
@@ -1887,6 +1954,16 @@ done
 
 TOTAL_USERS=$(( TOTAL_ACTIVE > 0 ? (TOTAL_ACTIVE+3)/4 : 0 ))
 
+# Реальные уникальные IP из stream лога
+STREAM_LOG="/opt/hipr/logs/stream-access.log"
+TODAY=$(date '+%d/%b/%Y')
+UNIQUE_TODAY=0
+UNIQUE_TOTAL=0
+if [[ -f "$STREAM_LOG" ]]; then
+  UNIQUE_TODAY=$(grep "$TODAY" "$STREAM_LOG" | awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' | sort -u | wc -l)
+  UNIQUE_TOTAL=$(awk '$7 ~ /2[34][0-9][0-9]/ {print $1}' "$STREAM_LOG" | sort -u | wc -l)
+fi
+
 # Пиковые/средние значения за 24ч через Prometheus API
 prom_query() {
   curl -sf --max-time 5 "http://127.0.0.1:9090/api/v1/query"     --data-urlencode "query=$1" 2>/dev/null |     python3 -c "import sys,json
@@ -1915,11 +1992,12 @@ else: print(f'{b} B')" 2>/dev/null || echo "${1}B"; }
 MSG="📊 <b>HIPR дневной отчёт</b>
 $(date '+%d.%m.%Y %H:%M %Z')
 
-👥 <b>Пользователи (за 24ч)</b>
-🟢 Сейчас онлайн: ~<b>${TOTAL_USERS}</b>
-📈 Пик за 24ч: ~<b>${PEAK_USERS}</b> польз одновременно
-📊 Среднее за 24ч: ~<b>${AVG_USERS}</b> польз
-📡 → Telegram: <b>${TOTAL_TG}</b> соединений сейчас
+👥 <b>Уникальных пользователей</b>
+📅 Сегодня: <b>${UNIQUE_TODAY}</b> уникальных IP
+📊 За всё время: <b>${UNIQUE_TOTAL}</b> уникальных IP
+🟢 Сейчас онлайн: ~<b>${TOTAL_USERS}</b> (TCP÷4)
+📈 Пик за 24ч: ~<b>${PEAK_USERS}</b> одновременно
+📡 → Telegram: <b>${TOTAL_TG}</b> соединений
 🛡️ Replay атак: <b>${TOTAL_REPLAYS}</b>
 
 📡 <b>По инстансам сейчас</b>
